@@ -1,15 +1,18 @@
+import logging
+import os
 from fastapi import FastAPI
-from pydantic import BaseModel
+from app.routers.report import router as report_router
 
-app = FastAPI(title="brain_mock")
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper()),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
-class ChatRequest(BaseModel):
-    message: str
+app = FastAPI(title="brain_notebooklm")
+
+app.include_router(report_router)
+
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "brain_mock"}
-
-@app.post("/chat")
-def chat(req: ChatRequest):
-    return {"response": f"[MOCK] {req.message}"}
+    return {"status": "ok", "service": "brain_notebooklm"}
