@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from app.models.report import ReportRequest, ReportResponse
-from app.services.report_service import create_report
+from app.services.report_service import create_report, create_report_mock
+from app.core.settings import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -15,11 +16,18 @@ async def generate_report_endpoint(req: ReportRequest) -> ReportResponse:
     """
     logger.info(
         "Iniciando geração de relatório",
-        extra={"title": req.notebook_title, "message_count": len(req.messages)},
+        extra={
+            "title": req.notebook_title,
+            "message_count": len(req.messages),
+            "use_mock": settings.USE_MOCK_REPORT,
+        },
     )
 
     try:
-        response = await create_report(req)
+        if settings.USE_MOCK_REPORT:
+            response = await create_report_mock(req)
+        else:
+            response = await create_report(req)
 
     except Exception as e:
         logger.exception("Erro ao gerar relatório no NotebookLM")

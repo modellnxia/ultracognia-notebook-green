@@ -192,3 +192,36 @@ async def create_report(req: ReportRequest) -> ReportResponse:
         report=report_content,
         report_path=str(report_path),
     )
+
+
+async def create_report_mock(req: ReportRequest) -> ReportResponse:
+    """
+    Retorna um mock do relatório para economizar quota da API durante desenvolvimento.
+    """
+    logger.info("Gerando relatório MOCK para economizar quota...")
+
+    nb_id = req.notebook_id or "mock-notebook-id-123456789"
+    titled = _timestamped_title(req.notebook_title or "Mock_Relatorio")
+
+    mock_content = (
+        "Este é um relatório gerado como MOCK para economizar a quota da API.\n\n"
+        "## 1) Resumo executivo\n"
+        "Resumo simulado com base nas mensagens recebidas.\n\n"
+        "## 2) Principais tópicos e descobertas\n"
+        "- Tópico simulado A\n"
+        "- Tópico simulado B\n\n"
+        "## 3) Análise crítica\n"
+        "Análise crítica simulada. Todos os dados aqui são apenas placeholders para teste de interface e fluxo.\n\n"
+        "## 4) Conclusões e recomendações\n"
+        "Recomendações simuladas."
+    )
+
+    report_path = _save_report(titled, mock_content)
+    logger.info("Relatório MOCK salvo em: %s", report_path)
+
+    return ReportResponse(
+        notebook_id=nb_id,
+        notebook_title=titled,
+        report=mock_content,
+        report_path=str(report_path),
+    )
