@@ -4,6 +4,7 @@ Inicializado no startup da aplicação (main.py).
 """
 
 import logging
+import ssl
 from typing import AsyncGenerator
 
 import asyncpg
@@ -16,11 +17,16 @@ _pool: asyncpg.Pool | None = None
 
 
 async def create_pool() -> None:
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
     global _pool
     _pool = await asyncpg.create_pool(
         dsn=settings.DATABASE_URL,
         min_size=2,
         max_size=10,
+        ssl=ctx,
         statement_cache_size=0,
     )
     logger.info("Pool de conexões PostgreSQL inicializado.")
