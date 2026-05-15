@@ -62,3 +62,4 @@ dmypy.json
 
 notebooklm/
 outputs/
+local_enviroment
