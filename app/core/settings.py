@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     SYSTEM_PROMPT: str
     OUTPUT_DIR: str
     USE_MOCK_REPORT: bool
+    SLIDE_DECK_INSTRUCTION: str
 
 
 settings = Settings()

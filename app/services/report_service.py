@@ -6,6 +6,9 @@ estruturado via artifacts API, garante a remoção da fonte proprietária
 [config] ao final e persiste o resultado localmente.
 """
 
+from app.core.settings import settings
+from notebooklm import SlideDeckLength
+from notebooklm import SlideDeckFormat
 import logging
 import os
 from datetime import datetime
@@ -16,7 +19,12 @@ from dotenv import load_dotenv
 from notebooklm import NotebookLMClient
 from notebooklm.rpc import ReportFormat
 
-from app.models.report import ReportRequest, ReportResponse
+from app.models.report import (
+    NotebookRequest,
+    ReportRequest,
+    ReportResponse,
+    NotebookDefaultResponse,
+)
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -192,6 +200,32 @@ async def create_report(req: ReportRequest) -> ReportResponse:
         report=report_content,
         report_path=str(report_path),
     )
+
+
+async def create_slides_from_notebook(req: NotebookRequest) -> NotebookDefaultResponse:
+    """
+    Cria slides a partir do relatório gerado pelo NotebookLM.
+    """
+    async with await NotebookLMClient.from_storage() as client:
+        logger.debug(f"[5b/6] Gerando slide deck...")
+        slide_status = await client.artifacts.generate_slide_deck(
+            req.notebook_id,
+            slide_format=SlideDeckFormat.PRESENTER_SLIDES,
+            slide_length=SlideDeckLength.DEFAULT,
+            instructions=settings.SLIDE_DECK_INSTRUCTION,
+        )
+        await client.artifacts.wait_for_completion(
+            req.notebook_id, slide_status.task_id, timeout=1200
+        )
+        output_dir = _ensure_output_dir()
+        slides_path = output_dir / f"{req.notebook_id}_slides.pdf"
+        await client.artifacts.download_slide_deck(req.notebook_id, str(slides_path))
+        logger.debug(f"      ✓ Slides salvos em: {slides_path}")
+        return NotebookDefaultResponse(
+            notebook_id=req.notebook_id,
+            message=f"Slides criados com sucesso",
+            status=True,
+        )
 
 
 async def create_report_mock(req: ReportRequest) -> ReportResponse:

@@ -1,6 +1,17 @@
+from pydantic_core import core_schema
+from app.models.report import NotebookDefaultResponse
 from fastapi import APIRouter, HTTPException
-from app.models.report import ReportRequest, ReportResponse
-from app.services.report_service import create_report, create_report_mock
+from app.models.report import (
+    ReportRequest,
+    NotebookRequest,
+    ReportResponse,
+    NotebookDefaultResponse,
+)
+from app.services.report_service import (
+    create_report,
+    create_report_mock,
+    create_slides_from_notebook,
+)
 from app.core.settings import settings
 import logging
 
@@ -39,3 +50,16 @@ async def generate_report_endpoint(req: ReportRequest) -> ReportResponse:
         "Relatório gerado com sucesso", extra={"notebook_id": response.notebook_id}
     )
     return response
+
+
+@router.post("/create-slides", response_model=NotebookDefaultResponse)
+async def create_slides_endpoint(req: NotebookRequest):
+    try:
+        response = await create_slides_from_notebook(req)
+        logger.info(
+            "Slides gerados com sucesso", extra={"notebook_id": response.notebook_id}
+        )
+        return response
+    except Exception as e:
+        logger.exception("Erro ao gerar slides no NotebookLM")
+        raise HTTPException(status_code=500, detail=f"Erro ao gerar slides: {str(e)}")
