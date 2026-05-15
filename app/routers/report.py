@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from app.models.report import ReportRequest, ReportResponse
+from app.services.report_service import create_report
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,12 +19,7 @@ async def generate_report_endpoint(req: ReportRequest) -> ReportResponse:
     )
 
     try:
-        response = ReportResponse(
-            notebook_id="79723930-0e8a-4e57-b94f-a1f505b8f97b",
-            notebook_title="Teste de Relat\u00f3rio Textual_20260514_083818",
-            report="Com certeza! Acabei de gerar o **relat\u00f3rio completo** solicitado, abrangendo o resumo executivo, os principais t\u00f3picos, uma an\u00e1lise cr\u00edtica e as recomenda\u00e7\u00f5es finais com base em nossa intera\u00e7\u00e3o sobre a geografia brasileira.\n\nO documento j\u00e1 est\u00e1 sendo processado e estar\u00e1 dispon\u00edvel em breve na aba Studio. Voc\u00ea poder\u00e1 revisar todos os pontos detalhadamente por l\u00e1.",
-            report_path="outputs/Teste de Relat\u00f3rio Textual_20260514_083818_relatorio.md",
-        )
+        response = await create_report(req)
 
     except Exception as e:
         logger.exception("Erro ao gerar relatório no NotebookLM")
