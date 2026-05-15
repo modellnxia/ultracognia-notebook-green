@@ -1,3 +1,6 @@
+from datetime import date as dt_date
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -35,3 +38,15 @@ class NotebookDefaultResponse(BaseModel):
     notebook_id: str
     message: str
     status: bool
+
+
+class UserDateReportRequest(BaseModel):
+    user_id: UUID = Field(..., description="UUID do usuário")
+    target_date: dt_date = Field(..., description="Data das mensagens (YYYY-MM-DD)")
+    notebook_title: str = Field(
+        "Relatório de Conversa",
+        description="Título base do notebook a ser criado no NotebookLM",
+    )
+    notebook_id: Optional[str] = Field(
+        None, description="Reutilizar notebook existente (opcional)"
+    )

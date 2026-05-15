@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     OUTPUT_DIR: str
     USE_MOCK_REPORT: bool
     SLIDE_DECK_INSTRUCTION: str
+    DATABASE_URL: str
 
 
 settings = Settings()
