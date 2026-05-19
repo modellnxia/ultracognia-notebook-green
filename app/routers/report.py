@@ -81,12 +81,16 @@ async def generate_report_from_db(req: UserDateReportRequest) -> ReportResponse:
     try:
         async for conn in get_db_conn():
             repo = ConversationMessageRepository(conn)
-            rows = await repo.fetch_messages_by_user_and_date(req.user_id, req.target_date)
+            rows = await repo.fetch_messages_by_user_and_date(
+                req.user_id, req.target_date
+            )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.exception("Erro ao consultar banco de dados")
-        raise HTTPException(status_code=500, detail=f"Erro ao consultar banco: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Erro ao consultar banco: {str(e)}"
+        )
 
     if not rows:
         raise HTTPException(
@@ -97,10 +101,7 @@ async def generate_report_from_db(req: UserDateReportRequest) -> ReportResponse:
     logger.info("%d mensagem(ns) encontrada(s).", len(rows))
 
     # ── 2. Formata mensagens como strings ────────────────────────────────────
-    messages = [
-        f"[{row['role'].upper()}] {row['content']}"
-        for row in rows
-    ]
+    messages = [f"[{row['role'].upper()}] {row['content']}" for row in rows]
 
     # ── 3. Monta ReportRequest e gera relatório ─────────────────────────────
     report_req = ReportRequest(
@@ -116,7 +117,9 @@ async def generate_report_from_db(req: UserDateReportRequest) -> ReportResponse:
             response = await create_report(report_req)
     except Exception as e:
         logger.exception("Erro ao gerar relatório no NotebookLM")
-        raise HTTPException(status_code=500, detail=f"Erro ao gerar relatório: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Erro ao gerar relatório: {str(e)}"
+        )
 
     logger.info(
         "Relatório gerado com sucesso", extra={"notebook_id": response.notebook_id}
