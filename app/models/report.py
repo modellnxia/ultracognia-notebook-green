@@ -12,19 +12,37 @@ class NotebookRequest(BaseModel):
 
 
 class ReportRequest(BaseModel):
-    messages: list[str] = Field(
-        ..., title="Mensagens", min_length=1, description="Lista de mensagens com a LLM"
+    """
+    Requisição para geração de relatório.
+    O notebook deve ter sido previamente preparado via /prepare-notebook.
+    """
+
+    notebook_id: str = Field(
+        ..., title="ID do notebook", description="ID do notebook no NotebookLM"
     )
 
+
+class PrepareNotebookRequest(BaseModel):
+    """
+    Requisição para preparar um notebook no NotebookLM a partir de mensagens do banco.
+    Se já existir um notebook para o usuário e data informados, retorna o ID existente (cache).
+    """
+
+    user_id: UUID = Field(..., description="UUID do usuário")
+    target_date: dt_date = Field(..., description="Data das mensagens (YYYY-MM-DD)")
     notebook_title: str = Field(
         "Relatório de Conversa",
-        title="Título do notebook",
         description="Título base do notebook a ser criado no NotebookLM",
     )
-
-    notebook_id: Optional[str] = Field(
-        None, title="ID do notebook", description="ID do notebook no NotebookLM"
+    force_recreate: bool = Field(
+        False, description="Forçar recriação do notebook ignorando o cache"
     )
+
+
+class PrepareNotebookResponse(BaseModel):
+    notebook_id: str
+    notebook_title: str
+    from_cache: bool
 
 
 class ReportResponse(BaseModel):
@@ -38,18 +56,3 @@ class NotebookDefaultResponse(BaseModel):
     notebook_id: str
     message: str
     status: bool
-
-
-class UserDateReportRequest(BaseModel):
-    user_id: UUID = Field(..., description="UUID do usuário")
-    target_date: dt_date = Field(..., description="Data das mensagens (YYYY-MM-DD)")
-    notebook_title: str = Field(
-        "Relatório de Conversa",
-        description="Título base do notebook a ser criado no NotebookLM",
-    )
-    notebook_id: Optional[str] = Field(
-        None, description="Reutilizar notebook existente (opcional)"
-    )
-    force_recreate: bool = Field(
-        False, description="Forçar recriação do relatório ignorando o cache"
-    )
