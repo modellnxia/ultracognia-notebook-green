@@ -250,12 +250,16 @@ def _fake_rows(count=2):
 async def _fake_get_db_conn_ok():
     conn = AsyncMock()
     conn.fetch = AsyncMock(return_value=_fake_rows())
+    conn.fetchrow = AsyncMock(return_value=None)
+    conn.execute = AsyncMock()
     yield conn
 
 
 async def _fake_get_db_conn_empty():
     conn = AsyncMock()
     conn.fetch = AsyncMock(return_value=[])
+    conn.fetchrow = AsyncMock(return_value=None)
+    conn.execute = AsyncMock()
     yield conn
 
 
@@ -279,7 +283,7 @@ class TestGenerateFromDb:
     @pytest.mark.asyncio
     async def test_mock_mode_returns_200_with_rows(self, app):
         with (
-            patch("app.routers.report.get_db_conn", return_value=_fake_get_db_conn_ok()),
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_get_db_conn_ok()),
             patch("app.routers.report.settings") as mock_settings,
             patch(
                 "app.routers.report.create_report_mock",
@@ -294,9 +298,70 @@ class TestGenerateFromDb:
         assert r.status_code == 200
 
     @pytest.mark.asyncio
+    async def test_returns_200_from_cache(self, app):
+        """Testa se o notebook em cache é retornado corretamente sem chamar create_report"""
+        async def _fake_get_db_conn_cache_hit():
+            conn = AsyncMock()
+            conn.fetchrow = AsyncMock(return_value={
+                "notebook_id": "cached-nb-123",
+                "notebook_title": "Rel DB_2024",
+                "report_content": "Conteúdo cached",
+                "report_path": "/tmp/cached.md"
+            })
+            yield conn
+            
+        with (
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_get_db_conn_cache_hit()),
+            patch("app.routers.report.create_report_mock") as mock_create,
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as ac:
+                r = await ac.post("/report/generate-from-db", json=_db_payload())
+                
+        assert r.status_code == 200
+        assert r.json()["notebook_id"] == "cached-nb-123"
+        mock_create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_force_recreate_bypasses_cache(self, app):
+        """Testa se flag force_recreate ignora o cache e chama create_report"""
+        async def _fake_get_db_conn_cache_hit():
+            conn = AsyncMock()
+            conn.fetchrow = AsyncMock(return_value={
+                "notebook_id": "cached-nb-123",
+                "notebook_title": "Rel DB_2024",
+                "report_content": "Conteúdo cached",
+                "report_path": "/tmp/cached.md"
+            })
+            conn.fetch = AsyncMock(return_value=_fake_rows())
+            conn.execute = AsyncMock()
+            yield conn
+            
+        with (
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_get_db_conn_cache_hit()),
+            patch("app.routers.report.settings") as mock_settings,
+            patch(
+                "app.routers.report.create_report_mock",
+                new=AsyncMock(return_value=_MOCK_REPORT_RESPONSE),
+            ) as mock_create,
+        ):
+            mock_settings.USE_MOCK_REPORT = True
+            payload = _db_payload()
+            payload["force_recreate"] = True
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as ac:
+                r = await ac.post("/report/generate-from-db", json=payload)
+                
+        assert r.status_code == 200
+        assert r.json()["notebook_id"] == _MOCK_REPORT_RESPONSE.notebook_id
+        mock_create.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_real_mode_calls_create_report(self, app):
         with (
-            patch("app.routers.report.get_db_conn", return_value=_fake_get_db_conn_ok()),
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_get_db_conn_ok()),
             patch("app.routers.report.settings") as mock_settings,
             patch(
                 "app.routers.report.create_report",
@@ -321,7 +386,7 @@ class TestGenerateFromDb:
             return _MOCK_REPORT_RESPONSE
 
         with (
-            patch("app.routers.report.get_db_conn", return_value=_fake_get_db_conn_ok()),
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_get_db_conn_ok()),
             patch("app.routers.report.settings") as mock_settings,
             patch("app.routers.report.create_report_mock", new=AsyncMock(side_effect=capture_req)),
         ):
@@ -339,7 +404,7 @@ class TestGenerateFromDb:
     @pytest.mark.asyncio
     async def test_returns_404_when_no_messages(self, app):
         with (
-            patch("app.routers.report.get_db_conn", return_value=_fake_get_db_conn_empty()),
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_get_db_conn_empty()),
             patch("app.routers.report.settings") as mock_settings,
         ):
             mock_settings.USE_MOCK_REPORT = True
@@ -353,7 +418,7 @@ class TestGenerateFromDb:
     @pytest.mark.asyncio
     async def test_404_detail_contains_user_id(self, app):
         with (
-            patch("app.routers.report.get_db_conn", return_value=_fake_get_db_conn_empty()),
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_get_db_conn_empty()),
             patch("app.routers.report.settings") as mock_settings,
         ):
             mock_settings.USE_MOCK_REPORT = True
@@ -370,7 +435,7 @@ class TestGenerateFromDb:
         with (
             patch(
                 "app.routers.report.get_db_conn",
-                return_value=_fake_get_db_conn_runtime_error(),
+                side_effect=lambda: _fake_get_db_conn_runtime_error(),
             ),
             patch("app.routers.report.settings") as mock_settings,
         ):
@@ -388,7 +453,7 @@ class TestGenerateFromDb:
         with (
             patch(
                 "app.routers.report.get_db_conn",
-                return_value=_fake_get_db_conn_generic_error(),
+                side_effect=lambda: _fake_get_db_conn_generic_error(),
             ),
             patch("app.routers.report.settings") as mock_settings,
         ):
@@ -405,7 +470,7 @@ class TestGenerateFromDb:
     @pytest.mark.asyncio
     async def test_returns_500_when_report_service_fails(self, app):
         with (
-            patch("app.routers.report.get_db_conn", return_value=_fake_get_db_conn_ok()),
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_get_db_conn_ok()),
             patch("app.routers.report.settings") as mock_settings,
             patch(
                 "app.routers.report.create_report_mock",
@@ -455,7 +520,7 @@ class TestGenerateFromDb:
     @pytest.mark.asyncio
     async def test_with_optional_notebook_id(self, app):
         with (
-            patch("app.routers.report.get_db_conn", return_value=_fake_get_db_conn_ok()),
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_get_db_conn_ok()),
             patch("app.routers.report.settings") as mock_settings,
             patch(
                 "app.routers.report.create_report_mock",

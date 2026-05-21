@@ -50,3 +50,6 @@ class UserDateReportRequest(BaseModel):
     notebook_id: Optional[str] = Field(
         None, description="Reutilizar notebook existente (opcional)"
     )
+    force_recreate: bool = Field(
+        False, description="Forçar recriação do relatório ignorando o cache"
+    )
