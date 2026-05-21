@@ -4,7 +4,7 @@ Coverage goal: 100%
 """
 import uuid
 from datetime import date
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -12,50 +12,27 @@ from app.scheduler.backup_job import backup_notebooks_daily
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Helpers para montar o cenário de conexão mockada
+# Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _make_conn(
-    user_ids=None,
-    cached_notebook=None,
-    messages=None,
-):
-    """
-    Cria um AsyncMock de conexão configurado para os cenários de teste.
-    - fetch: controlado por chamada (user_ids primeiro, depois messages)
-    - fetchrow: retorna cached_notebook ou None
-    - execute: no-op
-    """
-    conn = AsyncMock()
-    conn.close = AsyncMock()
-    conn.execute = AsyncMock()
-    async def fetchrow_side_effect(query, *args, **kwargs):
-        if "users" in query:
-            return {"name": "Usuario Teste"}
-        return cached_notebook
-    conn.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
-
-    if user_ids is None:
-        user_ids = []
-    if messages is None:
-        messages = []
-
-    # fetch é chamado com queries diferentes: primeiro para usuários, depois para mensagens
-    user_rows = [{"user_id": uid} for uid in user_ids]
-    message_rows = messages
-
-    conn.fetch = AsyncMock(side_effect=[user_rows, message_rows])
-    return conn
-
-
-def _make_prepare_response(uid):
+def _make_prepare_response(uid, from_cache=False):
     from app.models.report import PrepareNotebookResponse
     return PrepareNotebookResponse(
         notebook_id=f"nb-{uid}",
-        notebook_title=f"Backup Diário_20260521_230000",
-        from_cache=False,
+        notebook_title=f"Usuario_Teste-{date.today()}",
+        from_cache=from_cache,
     )
+
+
+def _make_conn(user_ids=None):
+    """Cria um AsyncMock de conexão com fetch de user_ids configurado."""
+    conn = AsyncMock()
+    conn.close = AsyncMock()
+    user_ids = user_ids or []
+    user_rows = [{"user_id": uid} for uid in user_ids]
+    conn.fetch = AsyncMock(return_value=user_rows)
+    return conn
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -70,138 +47,82 @@ class TestBackupNotebooksDaily:
     @pytest.mark.asyncio
     async def test_creates_notebook_for_user_without_cache(self):
         uid = uuid.uuid4()
-        msg_rows = [{"role": "user", "content": "oi", "created_at": None, "conversation_title": "c"}]
-        conn = _make_conn(user_ids=[uid], cached_notebook=None, messages=msg_rows)
+        conn = _make_conn(user_ids=[uid])
 
         with (
             patch("app.scheduler.backup_job.asyncpg.connect", new=AsyncMock(return_value=conn)),
             patch(
-                "app.scheduler.backup_job.prepare_notebook",
-                new=AsyncMock(return_value=_make_prepare_response(uid)),
-            ),
+                "app.scheduler.backup_job.orchestrate_prepare_notebook",
+                new=AsyncMock(return_value=_make_prepare_response(uid, from_cache=False)),
+            ) as mock_orchestrate,
         ):
             await backup_notebooks_daily()
 
-        conn.execute.assert_called_once()  # save_notebook_id
+        mock_orchestrate.assert_called_once_with(
+            conn=conn,
+            user_id=uid,
+            target_date=date.today(),
+        )
 
-    @pytest.mark.asyncio
-    async def test_formats_messages_with_role_prefix(self):
-        uid = uuid.uuid4()
-        msg_rows = [
-            {"role": "user", "content": "pergunta", "created_at": None, "conversation_title": "c"},
-            {"role": "assistant", "content": "resposta", "created_at": None, "conversation_title": "c"},
-        ]
-        conn = _make_conn(user_ids=[uid], cached_notebook=None, messages=msg_rows)
-        captured = {}
-
-        async def capture_prepare(req, messages, user_name):
-            captured["messages"] = messages
-            return _make_prepare_response(uid)
-
-        with (
-            patch("app.scheduler.backup_job.asyncpg.connect", new=AsyncMock(return_value=conn)),
-            patch("app.scheduler.backup_job.prepare_notebook", new=AsyncMock(side_effect=capture_prepare)),
-        ):
-            await backup_notebooks_daily()
-
-        assert captured["messages"][0] == "[USER] pergunta"
-        assert captured["messages"][1] == "[ASSISTANT] resposta"
-
-    # ── Cache hit: pula sem chamar o NotebookLM ────────────────────────────
+    # ── Cache hit: skips user ─────────────────────────────────────────────
 
     @pytest.mark.asyncio
     async def test_skips_user_with_existing_notebook(self):
         uid = uuid.uuid4()
-        cached = {"notebook_id": "nb-existing", "notebook_title": "old", "report_content": None, "report_path": None}
-        # fetch só é chamado 1x (para user_ids), pois o cache hit acontece antes do fetch de mensagens
-        conn = AsyncMock()
-        conn.close = AsyncMock()
-        conn.execute = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value=cached)
-        conn.fetch = AsyncMock(return_value=[{"user_id": uid}])
+        conn = _make_conn(user_ids=[uid])
 
         with (
             patch("app.scheduler.backup_job.asyncpg.connect", new=AsyncMock(return_value=conn)),
-            patch("app.scheduler.backup_job.prepare_notebook") as mock_prepare,
+            patch(
+                "app.scheduler.backup_job.orchestrate_prepare_notebook",
+                new=AsyncMock(return_value=_make_prepare_response(uid, from_cache=True)),
+            ) as mock_orchestrate,
         ):
             await backup_notebooks_daily()
 
-        mock_prepare.assert_not_called()
-        conn.execute.assert_not_called()
-
-    # ── Sem mensagens: pula o usuário ─────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_skips_user_without_messages(self):
-        uid = uuid.uuid4()
-        conn = _make_conn(user_ids=[uid], cached_notebook=None, messages=[])
-
-        with (
-            patch("app.scheduler.backup_job.asyncpg.connect", new=AsyncMock(return_value=conn)),
-            patch("app.scheduler.backup_job.prepare_notebook") as mock_prepare,
-        ):
-            await backup_notebooks_daily()
-
-        mock_prepare.assert_not_called()
+        mock_orchestrate.assert_called_once()
 
     # ── Sem usuários: encerra sem criar nada ──────────────────────────────
 
     @pytest.mark.asyncio
     async def test_no_users_today_does_nothing(self):
-        conn = AsyncMock()
-        conn.close = AsyncMock()
-        conn.fetch = AsyncMock(return_value=[])
+        conn = _make_conn(user_ids=[])
 
         with (
             patch("app.scheduler.backup_job.asyncpg.connect", new=AsyncMock(return_value=conn)),
-            patch("app.scheduler.backup_job.prepare_notebook") as mock_prepare,
+            patch("app.scheduler.backup_job.orchestrate_prepare_notebook") as mock_orchestrate,
         ):
             await backup_notebooks_daily()
 
-        mock_prepare.assert_not_called()
+        mock_orchestrate.assert_not_called()
 
     # ── Isolamento de falha: erro em um usuário não para os demais ────────
 
     @pytest.mark.asyncio
     async def test_continues_after_individual_user_error(self):
         uid1, uid2 = uuid.uuid4(), uuid.uuid4()
-        msg_rows = [{"role": "user", "content": "msg", "created_at": None, "conversation_title": "c"}]
-
-        conn = AsyncMock()
-        conn.close = AsyncMock()
-        conn.execute = AsyncMock()
-        async def fetchrow_side_effect(query, *args, **kwargs):
-            if "users" in query:
-                return {"name": "Usuario Teste"}
-            return None
-        conn.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
-        # fetch: user_ids, mensagens uid1, mensagens uid2
-        conn.fetch = AsyncMock(
-            side_effect=[
-                [{"user_id": uid1}, {"user_id": uid2}],
-                msg_rows,
-                msg_rows,
-            ]
-        )
+        conn = _make_conn(user_ids=[uid1, uid2])
 
         call_count = 0
 
-        async def flaky_prepare(req, messages, user_name):
+        async def flaky_orchestrate(conn, user_id, target_date):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 raise RuntimeError("notebooklm down")
-            return _make_prepare_response(uid2)
+            return _make_prepare_response(uid2, from_cache=False)
 
         with (
             patch("app.scheduler.backup_job.asyncpg.connect", new=AsyncMock(return_value=conn)),
-            patch("app.scheduler.backup_job.prepare_notebook", new=AsyncMock(side_effect=flaky_prepare)),
+            patch(
+                "app.scheduler.backup_job.orchestrate_prepare_notebook",
+                new=AsyncMock(side_effect=flaky_orchestrate),
+            ),
         ):
             await backup_notebooks_daily()
 
         # O segundo usuário foi processado mesmo após o erro do primeiro
         assert call_count == 2
-        conn.execute.assert_called_once()  # só uid2 foi salvo
 
     # ── Conexão é sempre encerrada (even on error) ─────────────────────────
 

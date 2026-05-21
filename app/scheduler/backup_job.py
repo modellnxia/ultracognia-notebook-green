@@ -11,14 +11,10 @@ abre sua própria conexão ao banco independente do pool do FastAPI.
 import asyncpg
 import logging
 from datetime import date
-from uuid import UUID
 
 from app.core.settings import settings
-from app.models.report import PrepareNotebookRequest
-from app.repositories.conversations import ConversationMessageRepository
-from app.repositories.notebooks import NotebookRepository
 from app.repositories.users import UserRepository
-from app.services.report_service import prepare_notebook
+from app.services.report_service import orchestrate_prepare_notebook
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +25,8 @@ async def backup_notebooks_daily() -> None:
     usuário com mensagens no dia atual.
 
     Fluxo por usuário:
-      1. Checa se já existe notebook no banco (cache hit → skip).
-      2. Busca as mensagens do dia.
-      3. Cria o notebook no NotebookLM via prepare_notebook().
-      4. Persiste o notebook_id no banco.
+      1. Delega toda a orquestração para orchestrate_prepare_notebook().
+         (cache check, busca de mensagens, criação no NotebookLM, persistência)
 
     Falhas individuais são capturadas e logadas sem interromper os demais.
     """
@@ -49,55 +43,24 @@ async def backup_notebooks_daily() -> None:
 
         for user_id in user_ids:
             try:
-                nb_repo = NotebookRepository(conn)
+                response = await orchestrate_prepare_notebook(
+                    conn=conn,
+                    user_id=user_id,
+                    target_date=today,
+                )
 
-                # ── 1. Checa cache ────────────────────────────────────────
-                cached = await nb_repo.get_notebook_by_user_and_date(user_id, today)
-                if cached:
+                if response.from_cache:
                     logger.info(
                         "Notebook já existe para user_id=%s — pulando.", user_id
                     )
                     skipped += 1
-                    continue
-
-                # ── 2. Busca mensagens ────────────────────────────────────
-                rows = await ConversationMessageRepository(
-                    conn
-                ).fetch_messages_by_user_and_date(user_id, today)
-
-                if not rows:
-                    logger.warning(
-                        "Nenhuma mensagem encontrada para user_id=%s — pulando.", user_id
+                else:
+                    logger.info(
+                        "Notebook criado — user_id=%s, notebook_id=%s",
+                        user_id,
+                        response.notebook_id,
                     )
-                    skipped += 1
-                    continue
-
-                messages = [f"[{row['role'].upper()}] {row['content']}" for row in rows]
-
-                # ── 3. Cria notebook no NotebookLM ────────────────────────
-                user_row = await conn.fetchrow("SELECT name FROM users WHERE id = $1", user_id)
-                user_name = user_row["name"] if user_row else "Unknown"
-
-                req = PrepareNotebookRequest(
-                    user_id=user_id,
-                    target_date=today,
-                )
-                response = await prepare_notebook(req, messages, user_name)
-
-                # ── 4. Persiste notebook_id no banco ──────────────────────
-                await nb_repo.save_notebook_id(
-                    user_id=user_id,
-                    notebook_id=response.notebook_id,
-                    notebook_title=response.notebook_title,
-                    target_date=today,
-                )
-
-                logger.info(
-                    "Notebook criado — user_id=%s, notebook_id=%s",
-                    user_id,
-                    response.notebook_id,
-                )
-                created += 1
+                    created += 1
 
             except Exception:
                 logger.exception(

@@ -15,13 +15,14 @@ from app.models.report import (
 )
 from app.services.report_service import (
     _build_system_source,
+    _call_notebooklm_prepare,
     _ensure_output_dir,
     _join_messages,
     _save_report,
     _timestamped_title,
     create_report,
     create_slides_from_notebook,
-    prepare_notebook,
+    orchestrate_prepare_notebook,
 )
 
 
@@ -118,87 +119,108 @@ def _fake_from_storage(client):
 
 class TestPrepareNotebook:
     @pytest.fixture
-    def req(self):
-        return PrepareNotebookRequest(
+    def req_args(self):
+        return dict(
             user_id=uuid.uuid4(),
             target_date=date(2026, 5, 14),
-            notebook_title="Teste",
         )
 
     @pytest.mark.asyncio
-    async def test_creates_notebook_and_adds_sources(self, req):
+    async def test_creates_notebook_and_adds_sources(self, req_args):
         client = _make_client_mock()
         with patch(
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            result = await prepare_notebook(req, ["[USER] olá", "[ASSISTANT] oi"], "Usuario Teste")
+            result = await _call_notebooklm_prepare(
+                "Usuario Teste", req_args["target_date"], ["[USER] olá", "[ASSISTANT] oi"]
+            )
 
         assert result.notebook_id == "new-nb-id-abc"
         assert result.from_cache is False
         client.notebooks.create.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_injects_config_source(self, req):
+    async def test_injects_config_source(self, req_args):
         client = _make_client_mock()
         with patch(
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            await prepare_notebook(req, ["msg"], "Usuario Teste")
+            await _call_notebooklm_prepare("Usuario Teste", req_args["target_date"], ["msg"])
 
         # Primeiro add_text é o [config], segundo é a conversa
         first_call_kwargs = client.sources.add_text.call_args_list[0]
         assert first_call_kwargs.kwargs.get("title") == "[config]"
 
     @pytest.mark.asyncio
-    async def test_removes_config_source_after_adding(self, req):
+    async def test_removes_config_source_after_adding(self, req_args):
         client = _make_client_mock()
         with patch(
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            await prepare_notebook(req, ["msg"], "Usuario Teste")
+            await _call_notebooklm_prepare("Usuario Teste", req_args["target_date"], ["msg"])
 
         client.sources.delete.assert_called_once_with("new-nb-id-abc", "config-src-id")
 
     @pytest.mark.asyncio
-    async def test_delete_failure_does_not_raise(self, req):
+    async def test_delete_failure_does_not_raise(self, req_args):
         client = _make_client_mock()
         client.sources.delete = AsyncMock(side_effect=Exception("delete failed"))
         with patch(
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            result = await prepare_notebook(req, ["msg"], "Usuario Teste")
+            result = await _call_notebooklm_prepare(
+                "Usuario Teste", req_args["target_date"], ["msg"]
+            )
 
         # Não deve explodir — apenas loga warning
         assert result.notebook_id == "new-nb-id-abc"
 
     @pytest.mark.asyncio
-    async def test_adds_conversation_source(self, req):
+    async def test_adds_conversation_source(self, req_args):
         client = _make_client_mock()
         with patch(
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            await prepare_notebook(req, ["[USER] pergunta"], "Usuario Teste")
+            await _call_notebooklm_prepare(
+                "Usuario Teste", req_args["target_date"], ["[USER] pergunta"]
+            )
 
         # Segundo add_text é a conversa — verifica que foi chamado com conteúdo
         second_call_kwargs = client.sources.add_text.call_args_list[1]
         assert "[USER] pergunta" in second_call_kwargs.kwargs.get("content", "")
 
     @pytest.mark.asyncio
-    async def test_returns_notebook_id(self, req):
+    async def test_returns_notebook_id(self, req_args):
         client = _make_client_mock()
         with patch(
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            result = await prepare_notebook(req, ["msg"], "Usuario Teste")
+            result = await _call_notebooklm_prepare(
+                "Usuario Teste", req_args["target_date"], ["msg"]
+            )
 
         assert result.notebook_id == "new-nb-id-abc"
         assert isinstance(result.notebook_title, str)
+
+    @pytest.mark.asyncio
+    async def test_notebook_title_format(self, req_args):
+        """Verifica que o título segue o formato Nome_Usuario-Data."""
+        client = _make_client_mock()
+        with patch(
+            "app.services.report_service.NotebookLMClient.from_storage",
+            _fake_from_storage(client),
+        ):
+            result = await _call_notebooklm_prepare(
+                "Henrique Freitas", date(2026, 5, 21), ["msg"]
+            )
+
+        assert result.notebook_title == "Henrique_Freitas-2026-05-21"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
