@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     OUTPUT_DIR: str
     SLIDE_DECK_INSTRUCTION: str
     DATABASE_URL: str
+    # Horário do backup diário (fuso: America/Sao_Paulo)
+    BACKUP_SCHEDULE_HOUR: int = 23
+    BACKUP_SCHEDULE_MINUTE: int = 0
 
 
 settings = Settings()

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.routers.report import router as report_router
 from app.core.database import create_pool, close_pool
+from app.scheduler.scheduler import create_scheduler
 
 logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper()),
@@ -14,7 +15,10 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await create_pool()
+    scheduler = create_scheduler()
+    scheduler.start()
     yield
+    scheduler.shutdown()
     await close_pool()
 
 
