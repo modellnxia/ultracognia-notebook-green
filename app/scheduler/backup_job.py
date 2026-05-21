@@ -75,12 +75,14 @@ async def backup_notebooks_daily() -> None:
                 messages = [f"[{row['role'].upper()}] {row['content']}" for row in rows]
 
                 # ── 3. Cria notebook no NotebookLM ────────────────────────
+                user_row = await conn.fetchrow("SELECT name FROM users WHERE id = $1", user_id)
+                user_name = user_row["name"] if user_row else "Unknown"
+
                 req = PrepareNotebookRequest(
                     user_id=user_id,
                     target_date=today,
-                    notebook_title="Backup Diário",
                 )
-                response = await prepare_notebook(req, messages)
+                response = await prepare_notebook(req, messages, user_name)
 
                 # ── 4. Persiste notebook_id no banco ──────────────────────
                 await nb_repo.save_notebook_id(

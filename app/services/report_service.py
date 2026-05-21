@@ -97,20 +97,20 @@ def _save_report(title: str, content: str) -> Path:
 
 
 async def prepare_notebook(
-    req: PrepareNotebookRequest, messages: list[str]
+    req: PrepareNotebookRequest, messages: list[str], user_name: str
 ) -> PrepareNotebookResponse:
     """
     Cria um notebook no NotebookLM e injeta as mensagens como fonte de texto.
 
-      1. Gera um título com timestamp.
-      2. Cria o notebook no NotebookLM.
-      3. Injeta o prompt proprietário como fonte oculta [config].
-      4. Adiciona as mensagens como fonte principal.
-      5. Remove a fonte [config] para proteger o prompt proprietário.
-      6. Retorna notebook_id e notebook_title.
+      1. Cria o notebook no NotebookLM usando o título exato fornecido.
+      2. Injeta o prompt proprietário como fonte oculta [config].
+      3. Adiciona as mensagens como fonte principal.
+      4. Remove a fonte [config] para proteger o prompt proprietário.
+      5. Retorna notebook_id e notebook_title.
     """
     unified_text = _join_messages(messages)
-    titled = _timestamped_title(req.notebook_title)
+    formatted_name = user_name.replace(" ", "_")
+    titled = f"{formatted_name}-{req.target_date}"
     config_source_id: Optional[str] = None
 
     async with await NotebookLMClient.from_storage() as client:
@@ -178,7 +178,9 @@ async def create_report(req: ReportRequest) -> ReportResponse:
     async with await NotebookLMClient.from_storage() as client:
 
         # 1. Gera o relatório via artifacts API
-        logger.info("Iniciando geração de relatório via artifacts API — notebook: %s", nb_id)
+        logger.info(
+            "Iniciando geração de relatório via artifacts API — notebook: %s", nb_id
+        )
         gen_status = await client.artifacts.generate_report(
             nb_id,
             report_format=ReportFormat.CUSTOM,

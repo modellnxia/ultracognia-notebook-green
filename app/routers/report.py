@@ -29,7 +29,9 @@ async def generate_report_endpoint(req: ReportRequest) -> ReportResponse:
     O notebook deve ter sido criado previamente via POST /report/prepare-notebook.
     Recebe apenas o notebook_id e aciona a geração do relatório via artifacts API.
     """
-    logger.info("Iniciando geração de relatório", extra={"notebook_id": req.notebook_id})
+    logger.info(
+        "Iniciando geração de relatório", extra={"notebook_id": req.notebook_id}
+    )
 
     try:
         response = await create_report(req)
@@ -59,7 +61,9 @@ async def create_slides_endpoint(req: NotebookRequest):
 
 
 @router.post("/prepare-notebook", response_model=PrepareNotebookResponse)
-async def prepare_notebook_endpoint(req: PrepareNotebookRequest) -> PrepareNotebookResponse:
+async def prepare_notebook_endpoint(
+    req: PrepareNotebookRequest,
+) -> PrepareNotebookResponse:
     """
     Prepara um notebook no NotebookLM a partir das mensagens do banco de dados.
 
@@ -97,12 +101,19 @@ async def prepare_notebook_endpoint(req: PrepareNotebookRequest) -> PrepareNoteb
             else:
                 logger.info("Recriação forçada solicitada (bypassing cache)")
 
-            # ── 2. Busca mensagens no banco ───────────────────────────────────
+            # ── 2. Busca mensagens e nome do usuário ──────────────────────────
+            user_row = await conn.fetchrow("SELECT name FROM users WHERE id = $1", req.user_id)
+            if not user_row:
+                raise HTTPException(status_code=404, detail="Usuário não encontrado")
+            user_name = user_row["name"]
+
             conv_repo = ConversationMessageRepository(conn)
             rows = await conv_repo.fetch_messages_by_user_and_date(
                 req.user_id, req.target_date
             )
 
+    except HTTPException:
+        raise
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
@@ -124,7 +135,7 @@ async def prepare_notebook_endpoint(req: PrepareNotebookRequest) -> PrepareNoteb
 
     # ── 4. Cria notebook no NotebookLM e injeta mensagens ────────────────────
     try:
-        response = await prepare_notebook(req, messages)
+        response = await prepare_notebook(req, messages, user_name)
     except Exception as e:
         logger.exception("Erro ao preparar notebook no NotebookLM")
         raise HTTPException(

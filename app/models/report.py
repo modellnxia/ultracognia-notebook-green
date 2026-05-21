@@ -30,10 +30,6 @@ class PrepareNotebookRequest(BaseModel):
 
     user_id: UUID = Field(..., description="UUID do usuário")
     target_date: dt_date = Field(..., description="Data das mensagens (YYYY-MM-DD)")
-    notebook_title: str = Field(
-        "Relatório de Conversa",
-        description="Título base do notebook a ser criado no NotebookLM",
-    )
     force_recreate: bool = Field(
         False, description="Forçar recriação do notebook ignorando o cache"
     )
