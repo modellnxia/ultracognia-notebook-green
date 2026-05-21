@@ -132,7 +132,7 @@ class TestPrepareNotebook:
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            result = await prepare_notebook(req, ["[USER] olá", "[ASSISTANT] oi"])
+            result = await prepare_notebook(req, ["[USER] olá", "[ASSISTANT] oi"], "Usuario Teste")
 
         assert result.notebook_id == "new-nb-id-abc"
         assert result.from_cache is False
@@ -145,7 +145,7 @@ class TestPrepareNotebook:
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            await prepare_notebook(req, ["msg"])
+            await prepare_notebook(req, ["msg"], "Usuario Teste")
 
         # Primeiro add_text é o [config], segundo é a conversa
         first_call_kwargs = client.sources.add_text.call_args_list[0]
@@ -158,7 +158,7 @@ class TestPrepareNotebook:
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            await prepare_notebook(req, ["msg"])
+            await prepare_notebook(req, ["msg"], "Usuario Teste")
 
         client.sources.delete.assert_called_once_with("new-nb-id-abc", "config-src-id")
 
@@ -170,7 +170,7 @@ class TestPrepareNotebook:
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            result = await prepare_notebook(req, ["msg"])
+            result = await prepare_notebook(req, ["msg"], "Usuario Teste")
 
         # Não deve explodir — apenas loga warning
         assert result.notebook_id == "new-nb-id-abc"
@@ -182,7 +182,7 @@ class TestPrepareNotebook:
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            await prepare_notebook(req, ["[USER] pergunta"])
+            await prepare_notebook(req, ["[USER] pergunta"], "Usuario Teste")
 
         # Segundo add_text é a conversa — verifica que foi chamado com conteúdo
         second_call_kwargs = client.sources.add_text.call_args_list[1]
@@ -195,7 +195,7 @@ class TestPrepareNotebook:
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            result = await prepare_notebook(req, ["msg"])
+            result = await prepare_notebook(req, ["msg"], "Usuario Teste")
 
         assert result.notebook_id == "new-nb-id-abc"
         assert isinstance(result.notebook_title, str)

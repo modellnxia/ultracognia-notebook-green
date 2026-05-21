@@ -226,7 +226,11 @@ def _fake_rows(count=2):
 async def _fake_db_miss():
     """Conexão sem cache: fetchrow retorna None, fetch retorna mensagens."""
     conn = AsyncMock()
-    conn.fetchrow = AsyncMock(return_value=None)
+    async def fetchrow_side_effect(query, *args, **kwargs):
+        if "users" in query:
+            return {"name": "Usuario Teste"}
+        return None
+    conn.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
     conn.fetch = AsyncMock(return_value=_fake_rows())
     conn.execute = AsyncMock()
     yield conn
@@ -248,7 +252,11 @@ async def _fake_db_hit():
 async def _fake_db_empty():
     """Conexão sem mensagens no banco."""
     conn = AsyncMock()
-    conn.fetchrow = AsyncMock(return_value=None)
+    async def fetchrow_side_effect(query, *args, **kwargs):
+        if "users" in query:
+            return {"name": "Usuario Teste"}
+        return None
+    conn.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
     conn.fetch = AsyncMock(return_value=[])
     yield conn
 
@@ -291,7 +299,7 @@ class TestPrepareNotebook:
     async def test_messages_formatted_with_role_prefix(self, app):
         captured = {}
 
-        async def capture_prepare(req, messages):
+        async def capture_prepare(req, messages, user_name):
             captured["messages"] = messages
             return _MOCK_PREPARE_RESPONSE
 
@@ -415,7 +423,11 @@ class TestPrepareNotebook:
     async def test_returns_500_when_db_save_fails(self, app):
         async def _db_with_broken_execute():
             conn = AsyncMock()
-            conn.fetchrow = AsyncMock(return_value=None)
+            async def fetchrow_side_effect(query, *args, **kwargs):
+                if "users" in query:
+                    return {"name": "Usuario Teste"}
+                return None
+            conn.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
             conn.fetch = AsyncMock(return_value=_fake_rows())
             conn.execute = AsyncMock(side_effect=Exception("insert failed"))
             yield conn

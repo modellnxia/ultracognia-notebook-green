@@ -30,7 +30,11 @@ def _make_conn(
     conn = AsyncMock()
     conn.close = AsyncMock()
     conn.execute = AsyncMock()
-    conn.fetchrow = AsyncMock(return_value=cached_notebook)
+    async def fetchrow_side_effect(query, *args, **kwargs):
+        if "users" in query:
+            return {"name": "Usuario Teste"}
+        return cached_notebook
+    conn.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
 
     if user_ids is None:
         user_ids = []
@@ -90,7 +94,7 @@ class TestBackupNotebooksDaily:
         conn = _make_conn(user_ids=[uid], cached_notebook=None, messages=msg_rows)
         captured = {}
 
-        async def capture_prepare(req, messages):
+        async def capture_prepare(req, messages, user_name):
             captured["messages"] = messages
             return _make_prepare_response(uid)
 
@@ -166,7 +170,11 @@ class TestBackupNotebooksDaily:
         conn = AsyncMock()
         conn.close = AsyncMock()
         conn.execute = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value=None)
+        async def fetchrow_side_effect(query, *args, **kwargs):
+            if "users" in query:
+                return {"name": "Usuario Teste"}
+            return None
+        conn.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
         # fetch: user_ids, mensagens uid1, mensagens uid2
         conn.fetch = AsyncMock(
             side_effect=[
@@ -178,7 +186,7 @@ class TestBackupNotebooksDaily:
 
         call_count = 0
 
-        async def flaky_prepare(req, messages):
+        async def flaky_prepare(req, messages, user_name):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
