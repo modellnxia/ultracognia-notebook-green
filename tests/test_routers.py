@@ -207,10 +207,10 @@ _USER_ID = str(uuid.uuid4())
 _DATE = "2026-05-14"
 
 
-def _prep_payload(user_id=_USER_ID, target_date=_DATE, **kwargs):
+def _prep_payload(user_id=_USER_ID, start_date=_DATE, **kwargs):
     return {
         "user_id": user_id,
-        "target_date": target_date,
+        "start_date": start_date,
         **kwargs,
     }
 
@@ -412,7 +412,7 @@ class TestPrepareNotebook:
         ) as ac:
             r = await ac.post(
                 "/report/prepare-notebook",
-                json=_prep_payload(target_date="not-a-date"),
+                json=_prep_payload(start_date="not-a-date"),
             )
         assert r.status_code == 422
 

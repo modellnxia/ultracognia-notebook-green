@@ -18,7 +18,7 @@ class UserRepository:
 
     async def fetch_users_with_messages_on_date(
         self,
-        target_date: date,
+        start_date: date,
     ) -> List[UUID]:
         """
         Retorna a lista de UUIDs de todos os usuários que possuem
@@ -32,6 +32,6 @@ class UserRepository:
             WHERE m.created_at::date = $1
               AND m.status = 'ok'
             """,
-            target_date,
+            start_date,
         )
         return [row["user_id"] for row in rows]

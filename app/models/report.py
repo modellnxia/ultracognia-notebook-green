@@ -29,8 +29,8 @@ class PrepareNotebookRequest(BaseModel):
     """
 
     user_id: UUID = Field(..., description="UUID do usuário")
-    target_date: dt_date = Field(..., description="Data das mensagens (YYYY-MM-DD) ou data inicial do range")
-    end_date: Optional[dt_date] = Field(None, description="Data final do range. Se omitido, será igual a target_date.")
+    start_date: dt_date = Field(..., description="Data das mensagens (YYYY-MM-DD) ou data inicial do range")
+    end_date: Optional[dt_date] = Field(None, description="Data final do range. Se omitido, será igual a start_date.")
     force_recreate: bool = Field(
         False, description="Forçar recriação do notebook ignorando o cache"
     )

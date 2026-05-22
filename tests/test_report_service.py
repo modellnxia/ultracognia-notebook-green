@@ -122,7 +122,7 @@ class TestPrepareNotebook:
     def req_args(self):
         return dict(
             user_id=uuid.uuid4(),
-            target_date=date(2026, 5, 14),
+            start_date=date(2026, 5, 14),
         )
 
     @pytest.mark.asyncio
@@ -133,7 +133,7 @@ class TestPrepareNotebook:
             _fake_from_storage(client),
         ):
             result = await _call_notebooklm_prepare(
-                "Usuario Teste", req_args["target_date"], ["[USER] olá", "[ASSISTANT] oi"]
+                "Usuario Teste", req_args["start_date"], ["[USER] olá", "[ASSISTANT] oi"]
             )
 
         assert result.notebook_id == "new-nb-id-abc"
@@ -147,7 +147,7 @@ class TestPrepareNotebook:
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            await _call_notebooklm_prepare("Usuario Teste", req_args["target_date"], ["msg"])
+            await _call_notebooklm_prepare("Usuario Teste", req_args["start_date"], ["msg"])
 
         # Primeiro add_text é o [config], segundo é a conversa
         first_call_kwargs = client.sources.add_text.call_args_list[0]
@@ -160,7 +160,7 @@ class TestPrepareNotebook:
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            await _call_notebooklm_prepare("Usuario Teste", req_args["target_date"], ["msg"])
+            await _call_notebooklm_prepare("Usuario Teste", req_args["start_date"], ["msg"])
 
         client.sources.delete.assert_called_once_with("new-nb-id-abc", "config-src-id")
 
@@ -173,7 +173,7 @@ class TestPrepareNotebook:
             _fake_from_storage(client),
         ):
             result = await _call_notebooklm_prepare(
-                "Usuario Teste", req_args["target_date"], ["msg"]
+                "Usuario Teste", req_args["start_date"], ["msg"]
             )
 
         # Não deve explodir — apenas loga warning
@@ -187,7 +187,7 @@ class TestPrepareNotebook:
             _fake_from_storage(client),
         ):
             await _call_notebooklm_prepare(
-                "Usuario Teste", req_args["target_date"], ["[USER] pergunta"]
+                "Usuario Teste", req_args["start_date"], ["[USER] pergunta"]
             )
 
         # Segundo add_text é a conversa — verifica que foi chamado com conteúdo
@@ -202,7 +202,7 @@ class TestPrepareNotebook:
             _fake_from_storage(client),
         ):
             result = await _call_notebooklm_prepare(
-                "Usuario Teste", req_args["target_date"], ["msg"]
+                "Usuario Teste", req_args["start_date"], ["msg"]
             )
 
         assert result.notebook_id == "new-nb-id-abc"

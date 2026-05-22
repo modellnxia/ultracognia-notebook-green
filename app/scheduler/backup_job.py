@@ -46,7 +46,7 @@ async def backup_notebooks_daily() -> None:
                 response = await orchestrate_prepare_notebook(
                     conn=conn,
                     user_id=user_id,
-                    target_date=today,
+                    start_date=today,
                 )
 
                 if response.from_cache:
