@@ -81,19 +81,19 @@ def _join_messages(messages: list[str]) -> str:
 
 
 async def _call_notebooklm_prepare(
-    user_name: str, target_date: date, messages: list[str]
+    user_name: str, date_str: str, messages: list[str]
 ) -> PrepareNotebookResponse:
     """
     Integração direta com a API do NotebookLM. Não acessa banco de dados.
 
-      1. Constrói o título no formato Nome_Usuario-Data.
+      1. Constrói o título no formato Nome_Usuario-DataRange.
       2. Cria o notebook no NotebookLM.
       3. Adiciona as mensagens como fonte principal.
       4. Retorna notebook_id e notebook_title.
     """
     unified_text = _join_messages(messages)
     formatted_name = user_name.replace(" ", "_")
-    titled = f"{formatted_name}-{target_date}"
+    titled = f"{formatted_name}-{date_str}"
 
     async with await NotebookLMClient.from_storage() as client:
         # 1. Cria o notebook
@@ -130,10 +130,11 @@ async def orchestrate_prepare_notebook(
     conn: asyncpg.Connection,
     user_id: UUID,
     target_date: date,
+    end_date: Optional[date] = None,
     force_recreate: bool = False,
 ) -> PrepareNotebookResponse:
     """
-    Orquestra a preparação completa de um notebook para um usuário e data.
+    Orquestra a preparação completa de um notebook para um usuário e data (ou range).
 
     Centraliza a lógica compartilhada entre o endpoint HTTP e o job de backup:
 
@@ -152,7 +153,7 @@ async def orchestrate_prepare_notebook(
 
     # 1. Checa cache no banco
     if not force_recreate:
-        cached = await nb_repo.get_notebook_by_user_and_date(user_id, target_date)
+        cached = await nb_repo.get_notebook_by_user_and_date_range(user_id, target_date, end_date)
         if cached:
             logger.info(
                 "Notebook encontrado no cache — notebook_id: %s",
@@ -172,18 +173,24 @@ async def orchestrate_prepare_notebook(
         raise ValueError(f"Usuário não encontrado: {user_id}")
     user_name = user_row["name"]
 
-    # 3. Busca mensagens do dia
+    # 3. Busca mensagens do dia ou range
     conv_repo = ConversationMessageRepository(conn)
-    rows = await conv_repo.fetch_messages_by_user_and_date(user_id, target_date)
+    rows = await conv_repo.fetch_messages_by_user_and_date_range(user_id, target_date, end_date)
     if not rows:
-        raise ValueError(
-            f"Nenhuma mensagem encontrada para user_id={user_id} na data {target_date}"
-        )
+        if target_date == end_date:
+            raise ValueError(f"Nenhuma mensagem encontrada para user_id={user_id} na data {target_date}")
+        raise ValueError(f"Nenhuma mensagem encontrada para user_id={user_id} entre {target_date} e {end_date}")
     messages = [f"[{row['role'].upper()}] {row['content']}" for row in rows]
     logger.info("%d mensagem(ns) encontrada(s) para user_id=%s.", len(messages), user_id)
 
+    # Prepara o date_str para o titulo
+    if target_date == end_date:
+        date_str = str(target_date)
+    else:
+        date_str = f"{target_date}_a_{end_date}"
+
     # 4. Cria notebook no NotebookLM
-    response = await _call_notebooklm_prepare(user_name, target_date, messages)
+    response = await _call_notebooklm_prepare(user_name, date_str, messages)
 
     # 5. Persiste no banco
     await nb_repo.save_notebook_id(
@@ -191,6 +198,7 @@ async def orchestrate_prepare_notebook(
         notebook_id=response.notebook_id,
         notebook_title=response.notebook_title,
         target_date=target_date,
+        end_date=end_date,
     )
     logger.info(
         "Notebook salvo no banco — notebook_id: %s", response.notebook_id

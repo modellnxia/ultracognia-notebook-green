@@ -9,8 +9,8 @@ class NotebookRepository:
     def __init__(self, conn: asyncpg.Connection):
         self.conn = conn
 
-    async def get_notebook_by_user_and_date(
-        self, user_id: UUID, target_date: date
+    async def get_notebook_by_user_and_date_range(
+        self, user_id: UUID, target_date: date, end_date: date
     ) -> Optional[asyncpg.Record]:
         """
         Busca um notebook gerado previamente para um usuário em uma data específica.
@@ -24,11 +24,12 @@ class NotebookRepository:
                 report_content,
                 report_path
             FROM notebooks
-            WHERE user_id = $1 AND target_date = $2
+            WHERE user_id = $1 AND target_date = $2 AND end_date = $3
             LIMIT 1
             """,
             user_id,
             target_date,
+            end_date,
         )
 
     async def save_notebook_id(
@@ -37,6 +38,7 @@ class NotebookRepository:
         notebook_id: str,
         notebook_title: str,
         target_date: date,
+        end_date: date,
     ) -> None:
         """
         Persiste o notebook_id no banco logo após a criação no NotebookLM,
@@ -48,9 +50,10 @@ class NotebookRepository:
                 user_id,
                 notebook_id,
                 notebook_title,
-                target_date
-            ) VALUES ($1, $2, $3, $4)
-            ON CONFLICT (user_id, target_date) DO UPDATE SET
+                target_date,
+                end_date
+            ) VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (user_id, target_date, end_date) DO UPDATE SET
                 notebook_id = EXCLUDED.notebook_id,
                 notebook_title = EXCLUDED.notebook_title,
                 created_at = CURRENT_TIMESTAMP
@@ -59,6 +62,7 @@ class NotebookRepository:
             notebook_id,
             notebook_title,
             target_date,
+            end_date,
         )
 
     async def update_notebook_report(
@@ -89,6 +93,7 @@ class NotebookRepository:
         notebook_id: str,
         notebook_title: str,
         target_date: date,
+        end_date: date,
         report_content: str,
         report_path: str,
     ) -> None:
@@ -103,10 +108,11 @@ class NotebookRepository:
                 notebook_id,
                 notebook_title,
                 target_date,
+                end_date,
                 report_content,
                 report_path
-            ) VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (user_id, target_date) DO UPDATE SET
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (user_id, target_date, end_date) DO UPDATE SET
                 notebook_id = EXCLUDED.notebook_id,
                 notebook_title = EXCLUDED.notebook_title,
                 report_content = EXCLUDED.report_content,
@@ -117,6 +123,7 @@ class NotebookRepository:
             notebook_id,
             notebook_title,
             target_date,
+            end_date,
             report_content,
             report_path,
         )

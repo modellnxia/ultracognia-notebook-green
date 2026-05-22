@@ -79,6 +79,7 @@ async def prepare_notebook_endpoint(
                 conn=conn,
                 user_id=req.user_id,
                 target_date=req.target_date,
+                end_date=req.end_date,
                 force_recreate=req.force_recreate,
             )
     except ValueError as e:

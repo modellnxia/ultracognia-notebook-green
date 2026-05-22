@@ -4,8 +4,9 @@ CREATE TABLE IF NOT EXISTS notebooks (
     notebook_id VARCHAR NOT NULL,
     notebook_title VARCHAR NOT NULL,
     target_date DATE NOT NULL,
+    end_date DATE NOT NULL,
     report_content TEXT,
     report_path VARCHAR,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, target_date)
+    UNIQUE(user_id, target_date, end_date)
 );
