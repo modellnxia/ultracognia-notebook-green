@@ -151,6 +151,9 @@ async def orchestrate_prepare_notebook(
     """
     nb_repo = NotebookRepository(conn)
 
+    if end_date is None:
+        end_date = start_date
+
     # 1. Checa cache no banco
     if not force_recreate:
         cached = await nb_repo.get_notebook_by_user_and_date_range(user_id, start_date, end_date)
