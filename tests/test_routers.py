@@ -77,7 +77,7 @@ class TestHealth:
             return {"status": "ok", "service": "brain_notebooklm"}
 
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
         ) as ac:
             r = await ac.get("/health")
         assert r.status_code == 200
@@ -108,11 +108,20 @@ class TestGenerateReport:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/generate", json=payload)
         assert r.status_code == 200
         assert r.json()["notebook_id"] == "nb-mock-01"
+
+    @pytest.mark.asyncio
+    async def test_missing_api_key_returns_401(self, app, payload):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            r = await ac.post("/report/generate", json=payload)
+        assert r.status_code == 401
+        assert "API Key" in r.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_calls_create_report_with_notebook_id(self, app, payload):
@@ -124,7 +133,7 @@ class TestGenerateReport:
             ) as mock_create,
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 await ac.post("/report/generate", json=payload)
         mock_create.assert_called_once()
@@ -141,7 +150,7 @@ class TestGenerateReport:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/generate", json=payload)
         assert r.status_code == 500
@@ -150,7 +159,7 @@ class TestGenerateReport:
     @pytest.mark.asyncio
     async def test_missing_notebook_id_returns_422(self, app):
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
         ) as ac:
             r = await ac.post("/report/generate", json={})
         assert r.status_code == 422
@@ -177,7 +186,7 @@ class TestCreateSlides:
             new=AsyncMock(return_value=_MOCK_SLIDES_RESPONSE),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/create-slides", json=payload)
         assert r.status_code == 200
@@ -190,7 +199,7 @@ class TestCreateSlides:
             new=AsyncMock(side_effect=Exception("slide error")),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/create-slides", json=payload)
         assert r.status_code == 500
@@ -199,7 +208,7 @@ class TestCreateSlides:
     @pytest.mark.asyncio
     async def test_invalid_notebook_id_type_returns_422(self, app):
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
         ) as ac:
             r = await ac.post(
                 "/report/create-slides",
@@ -257,7 +266,7 @@ class TestPrepareNotebook:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/prepare-notebook", json=_prep_payload())
         assert r.status_code == 200
@@ -277,7 +286,7 @@ class TestPrepareNotebook:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/prepare-notebook", json=_prep_payload())
         assert r.status_code == 200
@@ -297,7 +306,7 @@ class TestPrepareNotebook:
             payload = _prep_payload()
             payload["force_recreate"] = True
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/prepare-notebook", json=payload)
         assert r.status_code == 200
@@ -315,7 +324,7 @@ class TestPrepareNotebook:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/prepare-notebook", json=_prep_payload())
         assert r.status_code == 404
@@ -333,7 +342,7 @@ class TestPrepareNotebook:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/prepare-notebook", json=_prep_payload())
         assert r.status_code == 404
@@ -349,7 +358,7 @@ class TestPrepareNotebook:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/prepare-notebook", json=_prep_payload())
         assert _USER_ID in r.json()["detail"]
@@ -363,7 +372,7 @@ class TestPrepareNotebook:
             side_effect=lambda: _fake_db_runtime_error(),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/prepare-notebook", json=_prep_payload())
         assert r.status_code == 503
@@ -377,7 +386,7 @@ class TestPrepareNotebook:
             side_effect=lambda: _fake_db_generic_error(),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/prepare-notebook", json=_prep_payload())
         assert r.status_code == 500
@@ -395,7 +404,7 @@ class TestPrepareNotebook:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
+                transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
             ) as ac:
                 r = await ac.post("/report/prepare-notebook", json=_prep_payload())
         assert r.status_code == 500
@@ -406,7 +415,7 @@ class TestPrepareNotebook:
     @pytest.mark.asyncio
     async def test_invalid_user_id_returns_422(self, app):
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
         ) as ac:
             r = await ac.post(
                 "/report/prepare-notebook",
@@ -417,7 +426,7 @@ class TestPrepareNotebook:
     @pytest.mark.asyncio
     async def test_invalid_date_returns_422(self, app):
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app), base_url="http://test", headers={"X-API-Key": "sua_chave_secreta"}
         ) as ac:
             r = await ac.post(
                 "/report/prepare-notebook",
