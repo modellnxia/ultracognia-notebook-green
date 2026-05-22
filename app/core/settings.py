@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     # Horário do backup diário (fuso: America/Sao_Paulo)
     BACKUP_SCHEDULE_HOUR: int = 23
     BACKUP_SCHEDULE_MINUTE: int = 0
+    # Autenticação
+    API_KEY: str
 
 
 settings = Settings()

@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Security, status
+from fastapi.security import APIKeyHeader
+from app.core.settings import settings
 from app.models.report import (
     ReportRequest,
     NotebookRequest,
@@ -16,7 +18,22 @@ from app.core.database import get_db_conn
 import logging
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/report", tags=["report"])
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+def get_api_key(api_key: str = Security(api_key_header)):
+    if api_key == settings.API_KEY:
+        return api_key
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="API Key inválida ou ausente",
+    )
+
+router = APIRouter(
+    prefix="/report", 
+    tags=["report"],
+    dependencies=[Depends(get_api_key)],
+)
 
 
 @router.post("/generate", response_model=ReportResponse)

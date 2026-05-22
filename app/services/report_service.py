@@ -170,7 +170,9 @@ async def orchestrate_prepare_notebook(
 
     # 1. Checa cache no banco
     if not force_recreate:
-        cached = await nb_repo.get_notebook_by_user_and_date_range(user_id, start_date, end_date)
+        cached = await nb_repo.get_notebook_by_user_and_date_range(
+            user_id, start_date, end_date
+        )
         if cached:
             logger.info(
                 "Notebook encontrado no cache — notebook_id: %s",
@@ -192,13 +194,21 @@ async def orchestrate_prepare_notebook(
 
     # 3. Busca mensagens do dia ou range
     conv_repo = ConversationMessageRepository(conn)
-    rows = await conv_repo.fetch_messages_by_user_and_date_range(user_id, start_date, end_date)
+    rows = await conv_repo.fetch_messages_by_user_and_date_range(
+        user_id, start_date, end_date
+    )
     if not rows:
         if start_date == end_date:
-            raise ValueError(f"Nenhuma mensagem encontrada para user_id={user_id} na data {start_date}")
-        raise ValueError(f"Nenhuma mensagem encontrada para user_id={user_id} entre {start_date} e {end_date}")
+            raise ValueError(
+                f"Nenhuma mensagem encontrada para user_id={user_id} na data {start_date}"
+            )
+        raise ValueError(
+            f"Nenhuma mensagem encontrada para user_id={user_id} entre {start_date} e {end_date}"
+        )
     messages = [f"[{row['role'].upper()}] {row['content']}" for row in rows]
-    logger.info("%d mensagem(ns) encontrada(s) para user_id=%s.", len(messages), user_id)
+    logger.info(
+        "%d mensagem(ns) encontrada(s) para user_id=%s.", len(messages), user_id
+    )
 
     # 4. Cria notebook no NotebookLM
     response = await _call_notebooklm_prepare(user_name, start_date, end_date, messages)
@@ -211,9 +221,7 @@ async def orchestrate_prepare_notebook(
         start_date=start_date,
         end_date=end_date,
     )
-    logger.info(
-        "Notebook salvo no banco — notebook_id: %s", response.notebook_id
-    )
+    logger.info("Notebook salvo no banco — notebook_id: %s", response.notebook_id)
 
     return response
 
@@ -271,7 +279,9 @@ async def create_report(conn: asyncpg.Connection, req: ReportRequest) -> ReportR
             artifact_id=gen_status.task_id,
         )
         report_content = report_path.read_text(encoding="utf-8")
-        logger.debug("Relatório baixado salvo direto em disco (%d chars).", len(report_content))
+        logger.debug(
+            "Relatório baixado salvo direto em disco (%d chars).", len(report_content)
+        )
 
     # 4. Persiste no banco de dados
     repo = NotebookRepository(conn)
