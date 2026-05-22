@@ -211,45 +211,13 @@ def _prep_payload(user_id=_USER_ID, target_date=_DATE, **kwargs):
     return {
         "user_id": user_id,
         "target_date": target_date,
-        "notebook_title": "Rel Prep",
         **kwargs,
     }
 
 
-def _fake_rows(count=2):
-    return [
-        {"role": "user", "content": f"msg {i}", "created_at": None, "conversation_title": "c"}
-        for i in range(count)
-    ]
-
-
-async def _fake_db_miss():
-    """Conexão sem cache: fetchrow retorna None, fetch retorna mensagens."""
+async def _fake_db():
+    """Conexão de banco genérica (o orchestrate é mockado, então o DB não importa)."""
     conn = AsyncMock()
-    conn.fetchrow = AsyncMock(return_value=None)
-    conn.fetch = AsyncMock(return_value=_fake_rows())
-    conn.execute = AsyncMock()
-    yield conn
-
-
-async def _fake_db_hit():
-    """Conexão com cache: fetchrow retorna um notebook existente."""
-    conn = AsyncMock()
-    conn.fetchrow = AsyncMock(return_value={
-        "notebook_id": "nb-prepared-01",
-        "notebook_title": "Teste_20260521_000000",
-        "report_content": None,
-        "report_path": None,
-    })
-    conn.execute = AsyncMock()
-    yield conn
-
-
-async def _fake_db_empty():
-    """Conexão sem mensagens no banco."""
-    conn = AsyncMock()
-    conn.fetchrow = AsyncMock(return_value=None)
-    conn.fetch = AsyncMock(return_value=[])
     yield conn
 
 
@@ -273,9 +241,9 @@ class TestPrepareNotebook:
     @pytest.mark.asyncio
     async def test_cache_miss_calls_prepare_and_returns_200(self, app):
         with (
-            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db_miss()),
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db()),
             patch(
-                "app.routers.report.prepare_notebook",
+                "app.routers.report.orchestrate_prepare_notebook",
                 new=AsyncMock(return_value=_MOCK_PREPARE_RESPONSE),
             ),
         ):
@@ -287,32 +255,17 @@ class TestPrepareNotebook:
         assert r.json()["notebook_id"] == "nb-prepared-01"
         assert r.json()["from_cache"] is False
 
-    @pytest.mark.asyncio
-    async def test_messages_formatted_with_role_prefix(self, app):
-        captured = {}
-
-        async def capture_prepare(req, messages):
-            captured["messages"] = messages
-            return _MOCK_PREPARE_RESPONSE
-
-        with (
-            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db_miss()),
-            patch("app.routers.report.prepare_notebook", new=AsyncMock(side_effect=capture_prepare)),
-        ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as ac:
-                await ac.post("/report/prepare-notebook", json=_prep_payload())
-
-        assert all(m.startswith("[USER]") for m in captured["messages"])
-
     # ── Happy path: cache hit ───────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_cache_hit_returns_200_without_calling_prepare(self, app):
+    async def test_cache_hit_returns_200_without_calling_notebooklm(self, app):
+        cached_response = _MOCK_PREPARE_RESPONSE.model_copy(update={"from_cache": True})
         with (
-            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db_hit()),
-            patch("app.routers.report.prepare_notebook") as mock_prepare,
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db()),
+            patch(
+                "app.routers.report.orchestrate_prepare_notebook",
+                new=AsyncMock(return_value=cached_response),
+            ),
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -320,17 +273,17 @@ class TestPrepareNotebook:
                 r = await ac.post("/report/prepare-notebook", json=_prep_payload())
         assert r.status_code == 200
         assert r.json()["from_cache"] is True
-        assert r.json()["notebook_id"] == "nb-prepared-01"
-        mock_prepare.assert_not_called()
+
+    # ── force_recreate é repassado corretamente ─────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_force_recreate_bypasses_cache(self, app):
+    async def test_force_recreate_is_passed_to_orchestrate(self, app):
         with (
-            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db_miss()),
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db()),
             patch(
-                "app.routers.report.prepare_notebook",
+                "app.routers.report.orchestrate_prepare_notebook",
                 new=AsyncMock(return_value=_MOCK_PREPARE_RESPONSE),
-            ) as mock_prepare,
+            ) as mock_orchestrate,
         ):
             payload = _prep_payload()
             payload["force_recreate"] = True
@@ -339,13 +292,37 @@ class TestPrepareNotebook:
             ) as ac:
                 r = await ac.post("/report/prepare-notebook", json=payload)
         assert r.status_code == 200
-        mock_prepare.assert_called_once()
+        assert mock_orchestrate.call_args.kwargs["force_recreate"] is True
+
+    # ── 404 when user not found ─────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_returns_404_when_user_not_found(self, app):
+        with (
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db()),
+            patch(
+                "app.routers.report.orchestrate_prepare_notebook",
+                new=AsyncMock(side_effect=ValueError("Usuário não encontrado")),
+            ),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as ac:
+                r = await ac.post("/report/prepare-notebook", json=_prep_payload())
+        assert r.status_code == 404
+        assert "não encontrado" in r.json()["detail"]
 
     # ── 404 when no messages ────────────────────────────────────────────────
 
     @pytest.mark.asyncio
     async def test_returns_404_when_no_messages(self, app):
-        with patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db_empty()):
+        with (
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db()),
+            patch(
+                "app.routers.report.orchestrate_prepare_notebook",
+                new=AsyncMock(side_effect=ValueError(f"Nenhuma mensagem encontrada para user_id={_USER_ID}")),
+            ),
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as ac:
@@ -355,7 +332,13 @@ class TestPrepareNotebook:
 
     @pytest.mark.asyncio
     async def test_404_detail_contains_user_id(self, app):
-        with patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db_empty()):
+        with (
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db()),
+            patch(
+                "app.routers.report.orchestrate_prepare_notebook",
+                new=AsyncMock(side_effect=ValueError(f"Nenhuma mensagem encontrada para user_id={_USER_ID}")),
+            ),
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as ac:
@@ -376,7 +359,7 @@ class TestPrepareNotebook:
                 r = await ac.post("/report/prepare-notebook", json=_prep_payload())
         assert r.status_code == 503
 
-    # ── 500 on generic DB error ─────────────────────────────────────────────
+    # ── 500 on generic error ─────────────────────────────────────────────────
 
     @pytest.mark.asyncio
     async def test_returns_500_on_generic_db_error(self, app):
@@ -391,14 +374,14 @@ class TestPrepareNotebook:
         assert r.status_code == 500
         assert "db explodiu" in r.json()["detail"]
 
-    # ── 500 when prepare_notebook service fails ─────────────────────────────
+    # ── 500 when orchestrate service fails ──────────────────────────────────
 
     @pytest.mark.asyncio
     async def test_returns_500_when_prepare_service_fails(self, app):
         with (
-            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db_miss()),
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db()),
             patch(
-                "app.routers.report.prepare_notebook",
+                "app.routers.report.orchestrate_prepare_notebook",
                 new=AsyncMock(side_effect=Exception("notebooklm down")),
             ),
         ):
@@ -408,31 +391,6 @@ class TestPrepareNotebook:
                 r = await ac.post("/report/prepare-notebook", json=_prep_payload())
         assert r.status_code == 500
         assert "notebooklm down" in r.json()["detail"]
-
-    # ── 500 when save to DB fails ───────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_returns_500_when_db_save_fails(self, app):
-        async def _db_with_broken_execute():
-            conn = AsyncMock()
-            conn.fetchrow = AsyncMock(return_value=None)
-            conn.fetch = AsyncMock(return_value=_fake_rows())
-            conn.execute = AsyncMock(side_effect=Exception("insert failed"))
-            yield conn
-
-        with (
-            patch("app.routers.report.get_db_conn", side_effect=lambda: _db_with_broken_execute()),
-            patch(
-                "app.routers.report.prepare_notebook",
-                new=AsyncMock(return_value=_MOCK_PREPARE_RESPONSE),
-            ),
-        ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as ac:
-                r = await ac.post("/report/prepare-notebook", json=_prep_payload())
-        assert r.status_code == 500
-        assert "insert failed" in r.json()["detail"]
 
     # ── Validation ──────────────────────────────────────────────────────────
 
@@ -458,10 +416,4 @@ class TestPrepareNotebook:
             )
         assert r.status_code == 422
 
-    @pytest.mark.asyncio
-    async def test_missing_required_fields_returns_422(self, app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as ac:
-            r = await ac.post("/report/prepare-notebook", json={})
-        assert r.status_code == 422
+

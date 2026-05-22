@@ -1,5 +1,5 @@
 """
-Unit tests for app/repositories/conversations.py and app/repositories/notebooks.py
+Unit tests for app/repositories/conversations.py, app/repositories/notebooks.py, and app/repositories/users.py
 Coverage goal: 100%
 """
 import uuid
@@ -10,6 +10,7 @@ import pytest
 
 from app.repositories.conversations import ConversationMessageRepository
 from app.repositories.notebooks import NotebookRepository
+from app.repositories.users import UserRepository
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -206,4 +207,69 @@ class TestNotebookRepository:
 
     def test_stores_connection(self, mock_conn):
         repo = NotebookRepository(mock_conn)
+        assert repo.conn is mock_conn
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UserRepository
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestUserRepository:
+    @pytest.fixture
+    def target_date(self):
+        return date(2026, 5, 21)
+
+    @pytest.fixture
+    def mock_conn(self):
+        conn = AsyncMock()
+        conn.fetch = AsyncMock()
+        return conn
+
+    @pytest.fixture
+    def repo(self, mock_conn):
+        return UserRepository(mock_conn)
+
+    @pytest.mark.asyncio
+    async def test_returns_list_of_user_ids(self, repo, mock_conn, target_date):
+        uid = uuid.uuid4()
+        mock_conn.fetch.return_value = [{"user_id": uid}]
+        result = await repo.fetch_users_with_messages_on_date(target_date)
+        assert result == [uid]
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_when_no_users(self, repo, mock_conn, target_date):
+        mock_conn.fetch.return_value = []
+        result = await repo.fetch_users_with_messages_on_date(target_date)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_returns_multiple_user_ids(self, repo, mock_conn, target_date):
+        uids = [uuid.uuid4() for _ in range(3)]
+        mock_conn.fetch.return_value = [{"user_id": u} for u in uids]
+        result = await repo.fetch_users_with_messages_on_date(target_date)
+        assert result == uids
+
+    @pytest.mark.asyncio
+    async def test_passes_date_to_query(self, repo, mock_conn, target_date):
+        mock_conn.fetch.return_value = []
+        await repo.fetch_users_with_messages_on_date(target_date)
+        assert target_date in mock_conn.fetch.call_args.args
+
+    @pytest.mark.asyncio
+    async def test_sql_filters_by_status_ok(self, repo, mock_conn, target_date):
+        mock_conn.fetch.return_value = []
+        await repo.fetch_users_with_messages_on_date(target_date)
+        sql = mock_conn.fetch.call_args.args[0]
+        assert "'ok'" in sql
+
+    @pytest.mark.asyncio
+    async def test_sql_selects_distinct(self, repo, mock_conn, target_date):
+        mock_conn.fetch.return_value = []
+        await repo.fetch_users_with_messages_on_date(target_date)
+        sql = mock_conn.fetch.call_args.args[0].upper()
+        assert "DISTINCT" in sql
+
+    def test_stores_connection(self, mock_conn):
+        repo = UserRepository(mock_conn)
         assert repo.conn is mock_conn

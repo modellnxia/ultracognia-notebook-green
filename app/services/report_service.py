@@ -1,13 +1,18 @@
 """
 Serviço de geração de relatórios via NotebookLM.
 
-Expõe dois fluxos independentes:
+Expõe os seguintes fluxos públicos:
 
-  1. prepare_notebook() — cria o notebook no NotebookLM e injeta as mensagens
-     como fonte de texto.  Deve ser chamado antes de generate_report().
+  1. orchestrate_prepare_notebook() — orquestra toda a preparação: checa cache
+     no banco, valida usuário, busca mensagens, cria o notebook no NotebookLM
+     e persiste o resultado. Deve ser chamado pelo router e pelo job de backup.
 
   2. create_report() — recebe apenas o notebook_id e gera o artefato de
      relatório via artifacts API. Não cria nem altera o notebook.
+
+  3. create_slides_from_notebook() — gera o slide deck para um notebook preparado.
+
+Funções privadas (prefixo _) não devem ser chamadas diretamente de fora deste módulo.
 """
 
 from app.core.settings import settings
@@ -15,10 +20,12 @@ from notebooklm import SlideDeckLength
 from notebooklm import SlideDeckFormat
 import logging
 import os
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
+from uuid import UUID
 
+import asyncpg
 from dotenv import load_dotenv
 from notebooklm import NotebookLMClient
 from notebooklm.rpc import ReportFormat
@@ -31,6 +38,8 @@ from app.models.report import (
     ReportResponse,
     NotebookDefaultResponse,
 )
+from app.repositories.conversations import ConversationMessageRepository
+from app.repositories.notebooks import NotebookRepository
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -93,16 +102,16 @@ def _save_report(title: str, content: str) -> Path:
     return path
 
 
-# ── Serviços públicos ────────────────────────────────────────────────────────
+# ── Integrações privadas com NotebookLM ─────────────────────────────────────
 
 
-async def prepare_notebook(
-    req: PrepareNotebookRequest, messages: list[str]
+async def _call_notebooklm_prepare(
+    user_name: str, target_date: date, messages: list[str]
 ) -> PrepareNotebookResponse:
     """
-    Cria um notebook no NotebookLM e injeta as mensagens como fonte de texto.
+    Integração direta com a API do NotebookLM. Não acessa banco de dados.
 
-      1. Gera um título com timestamp.
+      1. Constrói o título no formato Nome_Usuario-Data.
       2. Cria o notebook no NotebookLM.
       3. Injeta o prompt proprietário como fonte oculta [config].
       4. Adiciona as mensagens como fonte principal.
@@ -110,7 +119,8 @@ async def prepare_notebook(
       6. Retorna notebook_id e notebook_title.
     """
     unified_text = _join_messages(messages)
-    titled = _timestamped_title(req.notebook_title)
+    formatted_name = user_name.replace(" ", "_")
+    titled = f"{formatted_name}-{target_date}"
     config_source_id: Optional[str] = None
 
     async with await NotebookLMClient.from_storage() as client:
@@ -162,6 +172,82 @@ async def prepare_notebook(
     )
 
 
+# ── Serviços públicos ────────────────────────────────────────────────────────
+
+
+async def orchestrate_prepare_notebook(
+    conn: asyncpg.Connection,
+    user_id: UUID,
+    target_date: date,
+    force_recreate: bool = False,
+) -> PrepareNotebookResponse:
+    """
+    Orquestra a preparação completa de um notebook para um usuário e data.
+
+    Centraliza a lógica compartilhada entre o endpoint HTTP e o job de backup:
+
+      1. Checa se já existe um notebook em cache no banco (skip se houver).
+      2. Busca o nome do usuário na tabela users.
+      3. Busca as mensagens do dia na tabela conversations.
+      4. Chama _call_notebooklm_prepare() para criar o notebook na API externa.
+      5. Persiste o notebook_id no banco via NotebookRepository.
+      6. Retorna PrepareNotebookResponse.
+
+    Exceções:
+        ValueError: se usuário não encontrado ou sem mensagens na data.
+        Qualquer exceção da API do NotebookLM é propagada.
+    """
+    nb_repo = NotebookRepository(conn)
+
+    # 1. Checa cache no banco
+    if not force_recreate:
+        cached = await nb_repo.get_notebook_by_user_and_date(user_id, target_date)
+        if cached:
+            logger.info(
+                "Notebook encontrado no cache — notebook_id: %s",
+                cached["notebook_id"],
+            )
+            return PrepareNotebookResponse(
+                notebook_id=cached["notebook_id"],
+                notebook_title=cached["notebook_title"],
+                from_cache=True,
+            )
+    else:
+        logger.info("Recriação forçada solicitada (bypassing cache)")
+
+    # 2. Busca nome do usuário
+    user_row = await conn.fetchrow("SELECT name FROM users WHERE id = $1", user_id)
+    if not user_row:
+        raise ValueError(f"Usuário não encontrado: {user_id}")
+    user_name = user_row["name"]
+
+    # 3. Busca mensagens do dia
+    conv_repo = ConversationMessageRepository(conn)
+    rows = await conv_repo.fetch_messages_by_user_and_date(user_id, target_date)
+    if not rows:
+        raise ValueError(
+            f"Nenhuma mensagem encontrada para user_id={user_id} na data {target_date}"
+        )
+    messages = [f"[{row['role'].upper()}] {row['content']}" for row in rows]
+    logger.info("%d mensagem(ns) encontrada(s) para user_id=%s.", len(messages), user_id)
+
+    # 4. Cria notebook no NotebookLM
+    response = await _call_notebooklm_prepare(user_name, target_date, messages)
+
+    # 5. Persiste no banco
+    await nb_repo.save_notebook_id(
+        user_id=user_id,
+        notebook_id=response.notebook_id,
+        notebook_title=response.notebook_title,
+        target_date=target_date,
+    )
+    logger.info(
+        "Notebook salvo no banco — notebook_id: %s", response.notebook_id
+    )
+
+    return response
+
+
 async def create_report(req: ReportRequest) -> ReportResponse:
     """
     Gera o artefato de relatório para um notebook já preparado.
@@ -178,7 +264,9 @@ async def create_report(req: ReportRequest) -> ReportResponse:
     async with await NotebookLMClient.from_storage() as client:
 
         # 1. Gera o relatório via artifacts API
-        logger.info("Iniciando geração de relatório via artifacts API — notebook: %s", nb_id)
+        logger.info(
+            "Iniciando geração de relatório via artifacts API — notebook: %s", nb_id
+        )
         gen_status = await client.artifacts.generate_report(
             nb_id,
             report_format=ReportFormat.CUSTOM,
