@@ -77,23 +77,32 @@ def _join_messages(messages: list[str]) -> str:
     return _MESSAGE_SEPARATOR.join(msg.strip() for msg in messages if msg.strip())
 
 
+def _build_notebook_title(user_name: str, start_date: date, end_date: date) -> str:
+    """Gera o título padrão do notebook no formato Nome_Usuario-Data ou Nome_Usuario-Start_a_End."""
+    formatted_name = user_name.replace(" ", "_")
+    if start_date == end_date:
+        date_str = str(start_date)
+    else:
+        date_str = f"{start_date}_a_{end_date}"
+    return f"{formatted_name}-{date_str}"
+
+
 # ── Integrações privadas com NotebookLM ─────────────────────────────────────
 
 
 async def _call_notebooklm_prepare(
-    user_name: str, target_date: date, messages: list[str]
+    user_name: str, start_date: date, end_date: date, messages: list[str]
 ) -> PrepareNotebookResponse:
     """
     Integração direta com a API do NotebookLM. Não acessa banco de dados.
 
-      1. Constrói o título no formato Nome_Usuario-Data.
+      1. Constrói o título no formato Nome_Usuario-DataRange via _build_notebook_title().
       2. Cria o notebook no NotebookLM.
       3. Adiciona as mensagens como fonte principal.
       4. Retorna notebook_id e notebook_title.
     """
     unified_text = _join_messages(messages)
-    formatted_name = user_name.replace(" ", "_")
-    titled = f"{formatted_name}-{target_date}"
+    titled = _build_notebook_title(user_name, start_date, end_date)
 
     async with await NotebookLMClient.from_storage() as client:
         # 1. Cria o notebook
@@ -102,11 +111,16 @@ async def _call_notebooklm_prepare(
         nb_id = nb.id
         logger.debug("Notebook criado — ID: %s", nb_id)
 
+        if start_date == end_date:
+            source_title = f"Histórico de Conversa - {start_date.strftime('%d/%m/%Y')}"
+        else:
+            source_title = f"Histórico de Conversa - {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"
+
         # 2. Adiciona conversa como fonte principal
         conv_source = await client.sources.add_text(
             nb_id,
             content=unified_text,
-            title=f"Histórico de Conversa - {target_date.strftime('%d/%m/%Y')}",
+            title=source_title,
             wait=True,
         )
         logger.debug(
@@ -129,11 +143,12 @@ async def _call_notebooklm_prepare(
 async def orchestrate_prepare_notebook(
     conn: asyncpg.Connection,
     user_id: UUID,
-    target_date: date,
+    start_date: date,
+    end_date: Optional[date] = None,
     force_recreate: bool = False,
 ) -> PrepareNotebookResponse:
     """
-    Orquestra a preparação completa de um notebook para um usuário e data.
+    Orquestra a preparação completa de um notebook para um usuário e data (ou range).
 
     Centraliza a lógica compartilhada entre o endpoint HTTP e o job de backup:
 
@@ -150,9 +165,14 @@ async def orchestrate_prepare_notebook(
     """
     nb_repo = NotebookRepository(conn)
 
+    if end_date is None:
+        end_date = start_date
+
     # 1. Checa cache no banco
     if not force_recreate:
-        cached = await nb_repo.get_notebook_by_user_and_date(user_id, target_date)
+        cached = await nb_repo.get_notebook_by_user_and_date_range(
+            user_id, start_date, end_date
+        )
         if cached:
             logger.info(
                 "Notebook encontrado no cache — notebook_id: %s",
@@ -172,29 +192,36 @@ async def orchestrate_prepare_notebook(
         raise ValueError(f"Usuário não encontrado: {user_id}")
     user_name = user_row["name"]
 
-    # 3. Busca mensagens do dia
+    # 3. Busca mensagens do dia ou range
     conv_repo = ConversationMessageRepository(conn)
-    rows = await conv_repo.fetch_messages_by_user_and_date(user_id, target_date)
+    rows = await conv_repo.fetch_messages_by_user_and_date_range(
+        user_id, start_date, end_date
+    )
     if not rows:
+        if start_date == end_date:
+            raise ValueError(
+                f"Nenhuma mensagem encontrada para user_id={user_id} na data {start_date}"
+            )
         raise ValueError(
-            f"Nenhuma mensagem encontrada para user_id={user_id} na data {target_date}"
+            f"Nenhuma mensagem encontrada para user_id={user_id} entre {start_date} e {end_date}"
         )
     messages = [f"[{row['role'].upper()}] {row['content']}" for row in rows]
-    logger.info("%d mensagem(ns) encontrada(s) para user_id=%s.", len(messages), user_id)
+    logger.info(
+        "%d mensagem(ns) encontrada(s) para user_id=%s.", len(messages), user_id
+    )
 
     # 4. Cria notebook no NotebookLM
-    response = await _call_notebooklm_prepare(user_name, target_date, messages)
+    response = await _call_notebooklm_prepare(user_name, start_date, end_date, messages)
 
     # 5. Persiste no banco
     await nb_repo.save_notebook_id(
         user_id=user_id,
         notebook_id=response.notebook_id,
         notebook_title=response.notebook_title,
-        target_date=target_date,
+        start_date=start_date,
+        end_date=end_date,
     )
-    logger.info(
-        "Notebook salvo no banco — notebook_id: %s", response.notebook_id
-    )
+    logger.info("Notebook salvo no banco — notebook_id: %s", response.notebook_id)
 
     return response
 
@@ -212,6 +239,7 @@ async def create_report(conn: asyncpg.Connection, req: ReportRequest) -> ReportR
     O notebook deve ter sido previamente criado via prepare_notebook().
     """
     nb_id = req.notebook_id
+    nb_title = req.notebook_title or nb_id
 
     async with await NotebookLMClient.from_storage() as client:
 
@@ -244,14 +272,16 @@ async def create_report(conn: asyncpg.Connection, req: ReportRequest) -> ReportR
             logger.info("Relatório concluído — artifact_id: %s", gen_status.task_id)
 
         # 3. Baixa o conteúdo do relatório direto para o arquivo final
-        report_path = _ensure_output_dir() / f"{nb_id}_relatorio.md"
+        report_path = _ensure_output_dir() / f"{nb_title}_relatorio.md"
         await client.artifacts.download_report(
             nb_id,
             output_path=str(report_path),
             artifact_id=gen_status.task_id,
         )
         report_content = report_path.read_text(encoding="utf-8")
-        logger.debug("Relatório baixado salvo direto em disco (%d chars).", len(report_content))
+        logger.debug(
+            "Relatório baixado salvo direto em disco (%d chars).", len(report_content)
+        )
 
     # 4. Persiste no banco de dados
     repo = NotebookRepository(conn)
@@ -264,7 +294,7 @@ async def create_report(conn: asyncpg.Connection, req: ReportRequest) -> ReportR
 
     return ReportResponse(
         notebook_id=nb_id,
-        notebook_title=nb_id,  # título não disponível sem nova consulta ao LM
+        notebook_title=nb_title,
         report=report_content,
         report_path=str(report_path),
     )

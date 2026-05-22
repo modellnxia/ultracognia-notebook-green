@@ -87,7 +87,7 @@ async def prepare_notebook_endpoint(
     """
     logger.info(
         "Preparando notebook",
-        extra={"user_id": str(req.user_id), "date": str(req.target_date)},
+        extra={"user_id": str(req.user_id), "date": str(req.start_date)},
     )
 
     try:
@@ -95,7 +95,8 @@ async def prepare_notebook_endpoint(
             return await orchestrate_prepare_notebook(
                 conn=conn,
                 user_id=req.user_id,
-                target_date=req.target_date,
+                start_date=req.start_date,
+                end_date=req.end_date,
                 force_recreate=req.force_recreate,
             )
     except ValueError as e:

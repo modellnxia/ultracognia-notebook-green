@@ -2,6 +2,7 @@
 Unit tests for app/services/report_service.py (branch: main)
 Coverage goal: 100%
 """
+
 import uuid
 from datetime import date
 from contextlib import asynccontextmanager
@@ -55,6 +56,7 @@ class TestHelpers:
 
     def test_ensure_output_dir_creates_path(self, tmp_path, monkeypatch):
         import app.services.report_service as svc
+
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path / "out")
         result = _ensure_output_dir()
         assert result.exists()
@@ -99,8 +101,10 @@ def _make_client_mock():
 
 def _fake_from_storage(client):
     """Retorna uma coroutine que devolve o client fake."""
+
     async def fake():
         return client
+
     return fake
 
 
@@ -114,7 +118,7 @@ class TestPrepareNotebook:
     def req_args(self):
         return dict(
             user_id=uuid.uuid4(),
-            target_date=date(2026, 5, 14),
+            start_date=date(2026, 5, 14),
         )
 
     @pytest.mark.asyncio
@@ -125,7 +129,10 @@ class TestPrepareNotebook:
             _fake_from_storage(client),
         ):
             result = await _call_notebooklm_prepare(
-                "Usuario Teste", req_args["target_date"], ["[USER] olá", "[ASSISTANT] oi"]
+                "Usuario Teste",
+                req_args["start_date"],
+                req_args["start_date"],
+                ["[USER] olá", "[ASSISTANT] oi"],
             )
 
         assert result.notebook_id == "new-nb-id-abc"
@@ -140,7 +147,10 @@ class TestPrepareNotebook:
             _fake_from_storage(client),
         ):
             await _call_notebooklm_prepare(
-                "Usuario Teste", req_args["target_date"], ["[USER] pergunta"]
+                "Usuario Teste",
+                req_args["start_date"],
+                req_args["start_date"],
+                ["[USER] pergunta"],
             )
 
         all_calls = client.sources.add_text.call_args_list
@@ -158,7 +168,7 @@ class TestPrepareNotebook:
             _fake_from_storage(client),
         ):
             result = await _call_notebooklm_prepare(
-                "Usuario Teste", req_args["target_date"], ["msg"]
+                "Usuario Teste", req_args["start_date"], req_args["start_date"], ["msg"]
             )
 
         assert result.notebook_id == "new-nb-id-abc"
@@ -173,7 +183,7 @@ class TestPrepareNotebook:
             _fake_from_storage(client),
         ):
             result = await _call_notebooklm_prepare(
-                "Henrique Freitas", date(2026, 5, 21), ["msg"]
+                "Henrique Freitas", date(2026, 5, 21), date(2026, 5, 21), ["msg"]
             )
 
         assert result.notebook_title == "Henrique_Freitas-2026-05-21"
@@ -204,7 +214,9 @@ class TestCreateReport:
         final_status.is_failed = False
 
         async def fake_download(nb_id, output_path, artifact_id):
-            Path(output_path).write_text("conteúdo do relatório gerado", encoding="utf-8")
+            Path(output_path).write_text(
+                "conteúdo do relatório gerado", encoding="utf-8"
+            )
 
         client = MagicMock()
         client.sources.add_text = AsyncMock()
@@ -217,8 +229,11 @@ class TestCreateReport:
         return client
 
     @pytest.mark.asyncio
-    async def test_generates_report_and_returns_response(self, req, tmp_path, monkeypatch, mock_conn):
+    async def test_generates_report_and_returns_response(
+        self, req, tmp_path, monkeypatch, mock_conn
+    ):
         import app.services.report_service as svc
+
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
         client = self._make_report_client(tmp_path)
         with patch(
@@ -231,10 +246,14 @@ class TestCreateReport:
         assert "conteúdo do relatório gerado" in result.report
 
     @pytest.mark.asyncio
-    async def test_calls_generate_report_with_custom_format(self, req, tmp_path, monkeypatch, mock_conn):
+    async def test_calls_generate_report_with_custom_format(
+        self, req, tmp_path, monkeypatch, mock_conn
+    ):
         import app.services.report_service as svc
+
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
         from notebooklm.rpc import ReportFormat
+
         client = self._make_report_client(tmp_path)
         with patch(
             "app.services.report_service.NotebookLMClient.from_storage",
@@ -246,8 +265,11 @@ class TestCreateReport:
         assert call_kwargs.kwargs.get("report_format") == ReportFormat.CUSTOM
 
     @pytest.mark.asyncio
-    async def test_raises_on_failed_generation(self, req, tmp_path, monkeypatch, mock_conn):
+    async def test_raises_on_failed_generation(
+        self, req, tmp_path, monkeypatch, mock_conn
+    ):
         import app.services.report_service as svc
+
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
 
         gen_status = MagicMock()
@@ -275,6 +297,7 @@ class TestCreateReport:
     @pytest.mark.asyncio
     async def test_saves_report_to_disk(self, req, tmp_path, monkeypatch, mock_conn):
         import app.services.report_service as svc
+
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
         client = self._make_report_client(tmp_path)
         with patch(
@@ -286,9 +309,12 @@ class TestCreateReport:
         assert Path(result.report_path).exists()
 
     @pytest.mark.asyncio
-    async def test_persists_report_in_database(self, req, tmp_path, monkeypatch, mock_conn):
+    async def test_persists_report_in_database(
+        self, req, tmp_path, monkeypatch, mock_conn
+    ):
         """Verifica que o relatório é persistido no banco após geração."""
         import app.services.report_service as svc
+
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
         client = self._make_report_client(tmp_path)
         with patch(
@@ -309,11 +335,15 @@ class TestCreateSlidesFromNotebook:
     @pytest.fixture
     def req(self):
         from app.models.report import NotebookRequest
+
         return NotebookRequest(notebook_id="nb-slides-01")
 
     @pytest.mark.asyncio
-    async def test_generates_slides_and_returns_response(self, req, tmp_path, monkeypatch):
+    async def test_generates_slides_and_returns_response(
+        self, req, tmp_path, monkeypatch
+    ):
         import app.services.report_service as svc
+
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
 
         gen_status = MagicMock()
@@ -343,6 +373,7 @@ class TestCreateSlidesFromNotebook:
     @pytest.mark.asyncio
     async def test_downloads_slide_deck(self, req, tmp_path, monkeypatch):
         import app.services.report_service as svc
+
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
 
         gen_status = MagicMock()

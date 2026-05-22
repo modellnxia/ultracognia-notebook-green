@@ -61,7 +61,7 @@ class TestBackupNotebooksDaily:
         mock_orchestrate.assert_called_once_with(
             conn=conn,
             user_id=uid,
-            target_date=date.today(),
+            start_date=date.today(),
         )
 
     # ── Cache hit: skips user ─────────────────────────────────────────────
@@ -105,7 +105,7 @@ class TestBackupNotebooksDaily:
 
         call_count = 0
 
-        async def flaky_orchestrate(conn, user_id, target_date):
+        async def flaky_orchestrate(conn, user_id, start_date):
             nonlocal call_count
             call_count += 1
             if call_count == 1:

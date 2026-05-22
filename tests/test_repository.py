@@ -24,7 +24,7 @@ class TestConversationMessageRepository:
         return uuid.uuid4()
 
     @pytest.fixture
-    def target_date(self):
+    def start_date(self):
         return date(2026, 5, 18)
 
     @pytest.fixture
@@ -40,52 +40,52 @@ class TestConversationMessageRepository:
     # ── Happy path ────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_returns_rows_from_db(self, repo, mock_conn, user_id, target_date):
+    async def test_returns_rows_from_db(self, repo, mock_conn, user_id, start_date):
         expected = [
             {"role": "user", "content": "hello", "created_at": None, "conversation_title": "conv"}
         ]
         mock_conn.fetch.return_value = expected
-        result = await repo.fetch_messages_by_user_and_date(user_id, target_date)
+        result = await repo.fetch_messages_by_user_and_date_range(user_id, start_date, start_date)
         assert result == expected
 
     @pytest.mark.asyncio
-    async def test_returns_empty_list_when_no_rows(self, repo, mock_conn, user_id, target_date):
+    async def test_returns_empty_list_when_no_rows(self, repo, mock_conn, user_id, start_date):
         mock_conn.fetch.return_value = []
-        result = await repo.fetch_messages_by_user_and_date(user_id, target_date)
+        result = await repo.fetch_messages_by_user_and_date_range(user_id, start_date, start_date)
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_calls_fetch_with_correct_args(self, repo, mock_conn, user_id, target_date):
+    async def test_calls_fetch_with_correct_args(self, repo, mock_conn, user_id, start_date):
         mock_conn.fetch.return_value = []
-        await repo.fetch_messages_by_user_and_date(user_id, target_date)
+        await repo.fetch_messages_by_user_and_date_range(user_id, start_date, start_date)
         args = mock_conn.fetch.call_args
         assert user_id in args.args
-        assert target_date in args.args
+        assert start_date in args.args
 
     @pytest.mark.asyncio
-    async def test_sql_contains_status_filter(self, repo, mock_conn, user_id, target_date):
+    async def test_sql_contains_status_filter(self, repo, mock_conn, user_id, start_date):
         mock_conn.fetch.return_value = []
-        await repo.fetch_messages_by_user_and_date(user_id, target_date)
+        await repo.fetch_messages_by_user_and_date_range(user_id, start_date, start_date)
         sql = mock_conn.fetch.call_args.args[0]
         assert "status" in sql
         assert "'ok'" in sql
 
     @pytest.mark.asyncio
-    async def test_sql_orders_by_created_at(self, repo, mock_conn, user_id, target_date):
+    async def test_sql_orders_by_created_at(self, repo, mock_conn, user_id, start_date):
         mock_conn.fetch.return_value = []
-        await repo.fetch_messages_by_user_and_date(user_id, target_date)
+        await repo.fetch_messages_by_user_and_date_range(user_id, start_date, start_date)
         sql = mock_conn.fetch.call_args.args[0]
         assert "ORDER BY" in sql
         assert "created_at" in sql
 
     @pytest.mark.asyncio
-    async def test_returns_multiple_rows(self, repo, mock_conn, user_id, target_date):
+    async def test_returns_multiple_rows(self, repo, mock_conn, user_id, start_date):
         rows = [
             {"role": "user", "content": f"msg {i}", "created_at": None, "conversation_title": "c"}
             for i in range(5)
         ]
         mock_conn.fetch.return_value = rows
-        result = await repo.fetch_messages_by_user_and_date(user_id, target_date)
+        result = await repo.fetch_messages_by_user_and_date_range(user_id, start_date, start_date)
         assert len(result) == 5
 
     def test_stores_connection(self, mock_conn):
@@ -104,7 +104,7 @@ class TestNotebookRepository:
         return uuid.uuid4()
 
     @pytest.fixture
-    def target_date(self):
+    def start_date(self):
         return date(2026, 5, 14)
 
     @pytest.fixture
@@ -118,10 +118,10 @@ class TestNotebookRepository:
     def repo(self, mock_conn):
         return NotebookRepository(mock_conn)
 
-    # ── get_notebook_by_user_and_date ─────────────────────────────────────
+    # ── get_notebook_by_user_and_date_range ──────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_get_returns_row_when_found(self, repo, mock_conn, user_id, target_date):
+    async def test_get_returns_row_when_found(self, repo, mock_conn, user_id, start_date):
         expected = {
             "notebook_id": "nb-123",
             "notebook_title": "Titulo",
@@ -129,77 +129,77 @@ class TestNotebookRepository:
             "report_path": None,
         }
         mock_conn.fetchrow.return_value = expected
-        result = await repo.get_notebook_by_user_and_date(user_id, target_date)
+        result = await repo.get_notebook_by_user_and_date_range(user_id, start_date, start_date)
         assert result == expected
 
     @pytest.mark.asyncio
-    async def test_get_returns_none_when_not_found(self, repo, mock_conn, user_id, target_date):
+    async def test_get_returns_none_when_not_found(self, repo, mock_conn, user_id, start_date):
         mock_conn.fetchrow.return_value = None
-        result = await repo.get_notebook_by_user_and_date(user_id, target_date)
+        result = await repo.get_notebook_by_user_and_date_range(user_id, start_date, start_date)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_calls_fetchrow_with_correct_args(self, repo, mock_conn, user_id, target_date):
+    async def test_get_calls_fetchrow_with_correct_args(self, repo, mock_conn, user_id, start_date):
         mock_conn.fetchrow.return_value = None
-        await repo.get_notebook_by_user_and_date(user_id, target_date)
+        await repo.get_notebook_by_user_and_date_range(user_id, start_date, start_date)
         args = mock_conn.fetchrow.call_args.args
         assert user_id in args
-        assert target_date in args
+        assert start_date in args
 
     # ── save_notebook_id ──────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_save_notebook_id_calls_execute(self, repo, mock_conn, user_id, target_date):
-        await repo.save_notebook_id(user_id, "nb-abc", "Titulo", target_date)
+    async def test_save_notebook_id_calls_execute(self, repo, mock_conn, user_id, start_date):
+        await repo.save_notebook_id(user_id, "nb-abc", "Titulo", start_date, start_date)
         mock_conn.execute.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_save_notebook_id_passes_correct_args(self, repo, mock_conn, user_id, target_date):
-        await repo.save_notebook_id(user_id, "nb-abc", "Titulo", target_date)
+    async def test_save_notebook_id_passes_correct_args(self, repo, mock_conn, user_id, start_date):
+        await repo.save_notebook_id(user_id, "nb-abc", "Titulo", start_date, start_date)
         args = mock_conn.execute.call_args.args
         assert user_id in args
         assert "nb-abc" in args
         assert "Titulo" in args
-        assert target_date in args
+        assert start_date in args
 
     @pytest.mark.asyncio
-    async def test_save_notebook_id_sql_has_on_conflict(self, repo, mock_conn, user_id, target_date):
-        await repo.save_notebook_id(user_id, "nb-abc", "Titulo", target_date)
+    async def test_save_notebook_id_sql_has_on_conflict(self, repo, mock_conn, user_id, start_date):
+        await repo.save_notebook_id(user_id, "nb-abc", "Titulo", start_date, start_date)
         sql = mock_conn.execute.call_args.args[0]
         assert "ON CONFLICT" in sql
 
     # ── update_notebook_report ────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_update_report_calls_execute(self, repo, mock_conn, user_id, target_date):
-        await repo.update_notebook_report(user_id, target_date, "conteudo", "/path/rel.md")
+    async def test_update_report_calls_execute(self, repo, mock_conn, user_id, start_date):
+        await repo.update_notebook_report(user_id, start_date, "conteudo", "/path/rel.md")
         mock_conn.execute.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_update_report_passes_correct_args(self, repo, mock_conn, user_id, target_date):
-        await repo.update_notebook_report(user_id, target_date, "conteudo", "/path/rel.md")
+    async def test_update_report_passes_correct_args(self, repo, mock_conn, user_id, start_date):
+        await repo.update_notebook_report(user_id, start_date, "conteudo", "/path/rel.md")
         args = mock_conn.execute.call_args.args
         assert "conteudo" in args
         assert "/path/rel.md" in args
         assert user_id in args
-        assert target_date in args
+        assert start_date in args
 
     @pytest.mark.asyncio
-    async def test_update_report_sql_is_update(self, repo, mock_conn, user_id, target_date):
-        await repo.update_notebook_report(user_id, target_date, "c", "/p")
+    async def test_update_report_sql_is_update(self, repo, mock_conn, user_id, start_date):
+        await repo.update_notebook_report(user_id, start_date, "c", "/p")
         sql = mock_conn.execute.call_args.args[0]
         assert sql.strip().upper().startswith("UPDATE")
 
     # ── save_notebook (full) ──────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_save_notebook_calls_execute(self, repo, mock_conn, user_id, target_date):
-        await repo.save_notebook(user_id, "nb-abc", "Titulo", target_date, "conteudo", "/path")
+    async def test_save_notebook_calls_execute(self, repo, mock_conn, user_id, start_date):
+        await repo.save_notebook(user_id, "nb-abc", "Titulo", start_date, start_date, "conteudo", "/path")
         mock_conn.execute.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_save_notebook_sql_has_on_conflict(self, repo, mock_conn, user_id, target_date):
-        await repo.save_notebook(user_id, "nb-abc", "Titulo", target_date, "conteudo", "/path")
+    async def test_save_notebook_sql_has_on_conflict(self, repo, mock_conn, user_id, start_date):
+        await repo.save_notebook(user_id, "nb-abc", "Titulo", start_date, start_date, "conteudo", "/path")
         sql = mock_conn.execute.call_args.args[0]
         assert "ON CONFLICT" in sql
 
@@ -217,7 +217,7 @@ class TestNotebookRepository:
 
 class TestUserRepository:
     @pytest.fixture
-    def target_date(self):
+    def start_date(self):
         return date(2026, 5, 21)
 
     @pytest.fixture
@@ -231,42 +231,42 @@ class TestUserRepository:
         return UserRepository(mock_conn)
 
     @pytest.mark.asyncio
-    async def test_returns_list_of_user_ids(self, repo, mock_conn, target_date):
+    async def test_returns_list_of_user_ids(self, repo, mock_conn, start_date):
         uid = uuid.uuid4()
         mock_conn.fetch.return_value = [{"user_id": uid}]
-        result = await repo.fetch_users_with_messages_on_date(target_date)
+        result = await repo.fetch_users_with_messages_on_date(start_date)
         assert result == [uid]
 
     @pytest.mark.asyncio
-    async def test_returns_empty_list_when_no_users(self, repo, mock_conn, target_date):
+    async def test_returns_empty_list_when_no_users(self, repo, mock_conn, start_date):
         mock_conn.fetch.return_value = []
-        result = await repo.fetch_users_with_messages_on_date(target_date)
+        result = await repo.fetch_users_with_messages_on_date(start_date)
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_returns_multiple_user_ids(self, repo, mock_conn, target_date):
+    async def test_returns_multiple_user_ids(self, repo, mock_conn, start_date):
         uids = [uuid.uuid4() for _ in range(3)]
         mock_conn.fetch.return_value = [{"user_id": u} for u in uids]
-        result = await repo.fetch_users_with_messages_on_date(target_date)
+        result = await repo.fetch_users_with_messages_on_date(start_date)
         assert result == uids
 
     @pytest.mark.asyncio
-    async def test_passes_date_to_query(self, repo, mock_conn, target_date):
+    async def test_passes_date_to_query(self, repo, mock_conn, start_date):
         mock_conn.fetch.return_value = []
-        await repo.fetch_users_with_messages_on_date(target_date)
-        assert target_date in mock_conn.fetch.call_args.args
+        await repo.fetch_users_with_messages_on_date(start_date)
+        assert start_date in mock_conn.fetch.call_args.args
 
     @pytest.mark.asyncio
-    async def test_sql_filters_by_status_ok(self, repo, mock_conn, target_date):
+    async def test_sql_filters_by_status_ok(self, repo, mock_conn, start_date):
         mock_conn.fetch.return_value = []
-        await repo.fetch_users_with_messages_on_date(target_date)
+        await repo.fetch_users_with_messages_on_date(start_date)
         sql = mock_conn.fetch.call_args.args[0]
         assert "'ok'" in sql
 
     @pytest.mark.asyncio
-    async def test_sql_selects_distinct(self, repo, mock_conn, target_date):
+    async def test_sql_selects_distinct(self, repo, mock_conn, start_date):
         mock_conn.fetch.return_value = []
-        await repo.fetch_users_with_messages_on_date(target_date)
+        await repo.fetch_users_with_messages_on_date(start_date)
         sql = mock_conn.fetch.call_args.args[0].upper()
         assert "DISTINCT" in sql
 
