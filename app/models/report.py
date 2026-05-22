@@ -20,6 +20,9 @@ class ReportRequest(BaseModel):
     notebook_id: str = Field(
         ..., title="ID do notebook", description="ID do notebook no NotebookLM"
     )
+    notebook_title: Optional[str] = Field(
+        None, description="Título do notebook. Se omitido, usa o notebook_id como fallback."
+    )
 
 
 class PrepareNotebookRequest(BaseModel):
