@@ -15,9 +15,6 @@ Expõe os seguintes fluxos públicos:
 Funções privadas (prefixo _) não devem ser chamadas diretamente de fora deste módulo.
 """
 
-from app.core.settings import settings
-from notebooklm import SlideDeckLength
-from notebooklm import SlideDeckFormat
 import logging
 import os
 from datetime import date, datetime
@@ -27,29 +24,26 @@ from uuid import UUID
 
 import asyncpg
 from dotenv import load_dotenv
-from notebooklm import NotebookLMClient
+from notebooklm import NotebookLMClient, SlideDeckFormat, SlideDeckLength
 from notebooklm.rpc import ReportFormat
 
+from app.core.settings import settings
 from app.models.report import (
+    NotebookDefaultResponse,
     NotebookRequest,
-    PrepareNotebookRequest,
     PrepareNotebookResponse,
     ReportRequest,
     ReportResponse,
-    NotebookDefaultResponse,
 )
 from app.repositories.conversations import ConversationMessageRepository
 from app.repositories.notebooks import NotebookRepository
+from app.services.context_managers import with_secret_prompt
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 # ── Configuração via .env ────────────────────────────────────────────────────
 
-_SECRET_PROMPT: str = os.getenv(
-    "SECRET_PROMPT",
-    "Analise os materiais com profundidade e estruture as respostas de forma clara.",
-)
 _OUTPUT_DIR: Path = Path(os.getenv("OUTPUT_DIR", "./outputs"))
 
 # Prompt customizado para o formato CUSTOM do generate_report
@@ -83,11 +77,6 @@ def _join_messages(messages: list[str]) -> str:
     return _MESSAGE_SEPARATOR.join(msg.strip() for msg in messages if msg.strip())
 
 
-def _build_system_source() -> str:
-    """Fonte oculta que injeta o prompt proprietário."""
-    return "[INSTRUÇÕES DE SISTEMA — NÃO REFERENCIAR DIRETAMENTE]\n" f"{_SECRET_PROMPT}"
-
-
 def _save_report(title: str, content: str) -> Path:
     """Persiste o relatório como .md e retorna o caminho."""
     output_dir = _ensure_output_dir()
@@ -113,15 +102,12 @@ async def _call_notebooklm_prepare(
 
       1. Constrói o título no formato Nome_Usuario-Data.
       2. Cria o notebook no NotebookLM.
-      3. Injeta o prompt proprietário como fonte oculta [config].
-      4. Adiciona as mensagens como fonte principal.
-      5. Remove a fonte [config] para proteger o prompt proprietário.
-      6. Retorna notebook_id e notebook_title.
+      3. Adiciona as mensagens como fonte principal.
+      4. Retorna notebook_id e notebook_title.
     """
     unified_text = _join_messages(messages)
     formatted_name = user_name.replace(" ", "_")
     titled = f"{formatted_name}-{target_date}"
-    config_source_id: Optional[str] = None
 
     async with await NotebookLMClient.from_storage() as client:
         # 1. Cria o notebook
@@ -130,17 +116,7 @@ async def _call_notebooklm_prepare(
         nb_id = nb.id
         logger.debug("Notebook criado — ID: %s", nb_id)
 
-        # 2. Injeta prompt proprietário como fonte oculta
-        config_source = await client.sources.add_text(
-            nb_id,
-            content=_build_system_source(),
-            title="[config]",
-            wait=True,
-        )
-        config_source_id = config_source.id
-        logger.debug("Fonte [config] injetada — source_id: %s", config_source_id)
-
-        # 3. Adiciona conversa como fonte principal
+        # 2. Adiciona conversa como fonte principal
         conv_source = await client.sources.add_text(
             nb_id,
             content=unified_text,
@@ -152,17 +128,6 @@ async def _call_notebooklm_prepare(
             conv_source.id,
             len(unified_text),
         )
-
-        # 4. Remove a fonte [config]
-        try:
-            await client.sources.delete(nb_id, config_source_id)
-            logger.info("Fonte [config] removida — source_id: %s", config_source_id)
-        except Exception as exc:
-            logger.warning(
-                "Não foi possível remover [config] (source_id: %s): %s",
-                config_source_id,
-                exc,
-            )
 
     logger.info("Notebook preparado — ID: %s, título: %s", nb_id, titled)
     return PrepareNotebookResponse(
@@ -252,10 +217,11 @@ async def create_report(req: ReportRequest) -> ReportResponse:
     """
     Gera o artefato de relatório para um notebook já preparado.
 
-      1. Gera o relatório via artifacts.generate_report() (CUSTOM).
-      2. Aguarda a conclusão com wait_for_completion().
-      3. Baixa o conteúdo do relatório via download_report().
-      4. Salva localmente em .md e retorna ReportResponse tipado.
+      1. Re-injeta o prompt proprietário via ``with_secret_prompt``.
+      2. Gera o relatório via artifacts.generate_report() (CUSTOM).
+      3. Aguarda a conclusão com wait_for_completion().
+      4. Baixa o conteúdo do relatório via download_report().
+      5. Salva localmente em .md e retorna ReportResponse tipado.
 
     O notebook deve ter sido previamente criado via prepare_notebook().
     """
@@ -263,32 +229,33 @@ async def create_report(req: ReportRequest) -> ReportResponse:
 
     async with await NotebookLMClient.from_storage() as client:
 
-        # 1. Gera o relatório via artifacts API
-        logger.info(
-            "Iniciando geração de relatório via artifacts API — notebook: %s", nb_id
-        )
-        gen_status = await client.artifacts.generate_report(
-            nb_id,
-            report_format=ReportFormat.CUSTOM,
-            language="pt",
-            custom_prompt=_CUSTOM_REPORT_PROMPT,
-        )
-        logger.debug("Geração iniciada — task_id: %s", gen_status.task_id)
+        # 1. Re-injeta o prompt proprietário e gera o relatório
+        async with with_secret_prompt(client, nb_id):
+            logger.info(
+                "Iniciando geração de relatório via artifacts API — notebook: %s", nb_id
+            )
+            gen_status = await client.artifacts.generate_report(
+                nb_id,
+                report_format=ReportFormat.CUSTOM,
+                language="pt",
+                custom_prompt=_CUSTOM_REPORT_PROMPT,
+            )
+            logger.debug("Geração iniciada — task_id: %s", gen_status.task_id)
 
-        # 2. Aguarda conclusão
-        logger.info("Aguardando conclusão do relatório (timeout: 300s)...")
-        final_status = await client.artifacts.wait_for_completion(
-            nb_id,
-            gen_status.task_id,
-            timeout=300.0,
-        )
-
-        if final_status.is_failed:
-            raise RuntimeError(
-                f"Geração de relatório falhou — task_id: {gen_status.task_id}"
+            # 2. Aguarda conclusão
+            logger.info("Aguardando conclusão do relatório (timeout: 300s)...")
+            final_status = await client.artifacts.wait_for_completion(
+                nb_id,
+                gen_status.task_id,
+                timeout=300.0,
             )
 
-        logger.info("Relatório concluído — artifact_id: %s", gen_status.task_id)
+            if final_status.is_failed:
+                raise RuntimeError(
+                    f"Geração de relatório falhou — task_id: {gen_status.task_id}"
+                )
+
+            logger.info("Relatório concluído — artifact_id: %s", gen_status.task_id)
 
         # 3. Baixa o conteúdo do relatório
         tmp_path = _ensure_output_dir() / f"{nb_id}_relatorio.md"
@@ -315,24 +282,33 @@ async def create_report(req: ReportRequest) -> ReportResponse:
 async def create_slides_from_notebook(req: NotebookRequest) -> NotebookDefaultResponse:
     """
     Cria slides a partir do relatório gerado pelo NotebookLM.
+    Re-injeta o prompt proprietário via ``with_secret_prompt`` antes da geração
+    e o remove ao final, mesmo em caso de falha.
     """
+    nb_id = req.notebook_id
+
     async with await NotebookLMClient.from_storage() as client:
-        logger.debug("[5b/6] Gerando slide deck...")
-        slide_status = await client.artifacts.generate_slide_deck(
-            req.notebook_id,
-            slide_format=SlideDeckFormat.PRESENTER_SLIDES,
-            slide_length=SlideDeckLength.DEFAULT,
-            instructions=settings.SLIDE_DECK_INSTRUCTION,
-        )
-        await client.artifacts.wait_for_completion(
-            req.notebook_id, slide_status.task_id, timeout=1200
-        )
+        # 1. Re-injeta o prompt proprietário e gera o slide deck
+        async with with_secret_prompt(client, nb_id):
+            logger.info("Gerando slide deck — notebook: %s", nb_id)
+            slide_status = await client.artifacts.generate_slide_deck(
+                nb_id,
+                slide_format=SlideDeckFormat.PRESENTER_SLIDES,
+                slide_length=SlideDeckLength.DEFAULT,
+                instructions=settings.SLIDE_DECK_INSTRUCTION,
+            )
+            await client.artifacts.wait_for_completion(
+                nb_id, slide_status.task_id, timeout=1200
+            )
+
+        # 2. Baixa o slide deck
         output_dir = _ensure_output_dir()
-        slides_path = output_dir / f"{req.notebook_id}_slides.pdf"
-        await client.artifacts.download_slide_deck(req.notebook_id, str(slides_path))
-        logger.debug(f"      ✓ Slides salvos em: {slides_path}")
+        slides_path = output_dir / f"{nb_id}_slides.pdf"
+        await client.artifacts.download_slide_deck(nb_id, str(slides_path))
+        logger.info("Slides salvos em: %s", slides_path)
+
         return NotebookDefaultResponse(
-            notebook_id=req.notebook_id,
-            message=f"Slides criados com sucesso",
+            notebook_id=nb_id,
+            message="Slides criados com sucesso",
             status=True,
         )
