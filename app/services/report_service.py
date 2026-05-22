@@ -77,20 +77,6 @@ def _join_messages(messages: list[str]) -> str:
     return _MESSAGE_SEPARATOR.join(msg.strip() for msg in messages if msg.strip())
 
 
-def _save_report(title: str, content: str) -> Path:
-    """Persiste o relatório como .md e retorna o caminho."""
-    output_dir = _ensure_output_dir()
-    path = output_dir / f"{title}_relatorio.md"
-    path.write_text(
-        f"# {title}\n\n"
-        f"**Gerado em:** {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
-        f"---\n\n"
-        f"{content}",
-        encoding="utf-8",
-    )
-    return path
-
-
 # ── Integrações privadas com NotebookLM ─────────────────────────────────────
 
 
@@ -257,19 +243,15 @@ async def create_report(req: ReportRequest) -> ReportResponse:
 
             logger.info("Relatório concluído — artifact_id: %s", gen_status.task_id)
 
-        # 3. Baixa o conteúdo do relatório
-        tmp_path = _ensure_output_dir() / f"{nb_id}_relatorio.md"
+        # 3. Baixa o conteúdo do relatório direto para o arquivo final
+        report_path = _ensure_output_dir() / f"{nb_id}_relatorio.md"
         await client.artifacts.download_report(
             nb_id,
-            output_path=str(tmp_path),
+            output_path=str(report_path),
             artifact_id=gen_status.task_id,
         )
-        report_content = tmp_path.read_text(encoding="utf-8")
-        logger.debug("Relatório baixado (%d chars).", len(report_content))
-
-    # 4. Persiste localmente e retorna
-    report_path = _save_report(nb_id, report_content)
-    logger.info("Relatório salvo em: %s", report_path)
+        report_content = report_path.read_text(encoding="utf-8")
+        logger.debug("Relatório baixado salvo direto em disco (%d chars).", len(report_content))
 
     return ReportResponse(
         notebook_id=nb_id,
