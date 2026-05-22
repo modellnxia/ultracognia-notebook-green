@@ -32,17 +32,17 @@ async def generate_report_endpoint(req: ReportRequest) -> ReportResponse:
     )
 
     try:
-        response = await create_report(req)
+        async for conn in get_db_conn():
+            response = await create_report(conn, req)
+            logger.info(
+                "Relatório gerado com sucesso", extra={"notebook_id": response.notebook_id}
+            )
+            return response
     except Exception as e:
         logger.exception("Erro ao gerar relatório no NotebookLM")
         raise HTTPException(
             status_code=500, detail=f"Erro ao gerar relatório: {str(e)}"
         )
-
-    logger.info(
-        "Relatório gerado com sucesso", extra={"notebook_id": response.notebook_id}
-    )
-    return response
 
 
 @router.post("/create-slides", response_model=NotebookDefaultResponse)

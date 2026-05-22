@@ -199,15 +199,15 @@ async def orchestrate_prepare_notebook(
     return response
 
 
-async def create_report(req: ReportRequest) -> ReportResponse:
+async def create_report(conn: asyncpg.Connection, req: ReportRequest) -> ReportResponse:
     """
     Gera o artefato de relatório para um notebook já preparado.
 
       1. Re-injeta o prompt proprietário via ``with_secret_prompt``.
       2. Gera o relatório via artifacts.generate_report() (CUSTOM).
       3. Aguarda a conclusão com wait_for_completion().
-      4. Baixa o conteúdo do relatório via download_report().
-      5. Salva localmente em .md e retorna ReportResponse tipado.
+      4. Baixa o conteúdo do relatório.
+      5. Persiste o conteúdo no banco de dados e retorna.
 
     O notebook deve ter sido previamente criado via prepare_notebook().
     """
@@ -252,6 +252,15 @@ async def create_report(req: ReportRequest) -> ReportResponse:
         )
         report_content = report_path.read_text(encoding="utf-8")
         logger.debug("Relatório baixado salvo direto em disco (%d chars).", len(report_content))
+
+    # 4. Persiste no banco de dados
+    repo = NotebookRepository(conn)
+    await repo.update_notebook_report_by_id(
+        notebook_id=nb_id,
+        report_content=report_content,
+        report_path=str(report_path),
+    )
+    logger.info("Relatório atualizado no banco de dados.")
 
     return ReportResponse(
         notebook_id=nb_id,

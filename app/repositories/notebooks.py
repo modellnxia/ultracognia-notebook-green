@@ -120,3 +120,23 @@ class NotebookRepository:
             report_content,
             report_path,
         )
+
+    async def update_notebook_report_by_id(
+        self,
+        notebook_id: str,
+        report_content: str,
+        report_path: str,
+    ) -> None:
+        """
+        Atualiza o registro existente com o conteúdo do relatório pelo notebook_id.
+        """
+        await self.conn.execute(
+            """
+            UPDATE notebooks
+            SET report_content = $1, report_path = $2
+            WHERE notebook_id = $3
+            """,
+            report_content,
+            report_path,
+            notebook_id,
+        )
