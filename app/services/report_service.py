@@ -106,7 +106,7 @@ async def _call_notebooklm_prepare(
         conv_source = await client.sources.add_text(
             nb_id,
             content=unified_text,
-            title=f"Histórico de Conversa - {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
+            title=f"Histórico de Conversa - {target_date.strftime('%d/%m/%Y')}",
             wait=True,
         )
         logger.debug(
