@@ -100,9 +100,12 @@ class TestGenerateReport:
 
     @pytest.mark.asyncio
     async def test_returns_200_on_success(self, app, payload):
-        with patch(
-            "app.routers.report.create_report",
-            new=AsyncMock(return_value=_MOCK_REPORT_RESPONSE),
+        with (
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db()),
+            patch(
+                "app.routers.report.create_report",
+                new=AsyncMock(return_value=_MOCK_REPORT_RESPONSE),
+            ),
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -113,23 +116,29 @@ class TestGenerateReport:
 
     @pytest.mark.asyncio
     async def test_calls_create_report_with_notebook_id(self, app, payload):
-        with patch(
-            "app.routers.report.create_report",
-            new=AsyncMock(return_value=_MOCK_REPORT_RESPONSE),
-        ) as mock_create:
+        with (
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db()),
+            patch(
+                "app.routers.report.create_report",
+                new=AsyncMock(return_value=_MOCK_REPORT_RESPONSE),
+            ) as mock_create,
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as ac:
                 await ac.post("/report/generate", json=payload)
         mock_create.assert_called_once()
-        called_req = mock_create.call_args.args[0]
+        called_req = mock_create.call_args[0][1]
         assert called_req.notebook_id == "nb-already-prepared-01"
 
     @pytest.mark.asyncio
     async def test_service_exception_returns_500(self, app, payload):
-        with patch(
-            "app.routers.report.create_report",
-            new=AsyncMock(side_effect=RuntimeError("lm down")),
+        with (
+            patch("app.routers.report.get_db_conn", side_effect=lambda: _fake_db()),
+            patch(
+                "app.routers.report.create_report",
+                new=AsyncMock(side_effect=RuntimeError("lm down")),
+            ),
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"

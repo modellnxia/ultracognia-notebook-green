@@ -1,11 +1,12 @@
 """
-Unit tests for app/services/report_service.py
+Unit tests for app/services/report_service.py (branch: main)
 Coverage goal: 100%
 """
 import uuid
 from datetime import date
+from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,16 +15,20 @@ from app.models.report import (
     ReportRequest,
 )
 from app.services.report_service import (
-    _build_system_source,
     _call_notebooklm_prepare,
     _ensure_output_dir,
     _join_messages,
-    _save_report,
     _timestamped_title,
     create_report,
     create_slides_from_notebook,
     orchestrate_prepare_notebook,
 )
+
+
+@asynccontextmanager
+async def _noop_secret_prompt(client, nb_id):
+    """Substituto do with_secret_prompt que não faz nada (sem acesso real ao LM)."""
+    yield
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -48,24 +53,11 @@ class TestHelpers:
         result = _join_messages(["  ", "hello", ""])
         assert result == "hello"
 
-    def test_build_system_source_contains_prompt(self):
-        src = _build_system_source()
-        assert "INSTRUÇÕES DE SISTEMA" in src
-
     def test_ensure_output_dir_creates_path(self, tmp_path, monkeypatch):
         import app.services.report_service as svc
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path / "out")
         result = _ensure_output_dir()
         assert result.exists()
-
-    def test_save_report_writes_file(self, tmp_path, monkeypatch):
-        import app.services.report_service as svc
-        monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
-        path = _save_report("TestTitle", "conteúdo do relatório")
-        assert path.exists()
-        text = path.read_text(encoding="utf-8")
-        assert "TestTitle" in text
-        assert "conteúdo do relatório" in text
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -113,7 +105,7 @@ def _fake_from_storage(client):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# prepare_notebook
+# _call_notebooklm_prepare
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -141,45 +133,6 @@ class TestPrepareNotebook:
         client.notebooks.create.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_injects_config_source(self, req_args):
-        client = _make_client_mock()
-        with patch(
-            "app.services.report_service.NotebookLMClient.from_storage",
-            _fake_from_storage(client),
-        ):
-            await _call_notebooklm_prepare("Usuario Teste", req_args["target_date"], ["msg"])
-
-        # Primeiro add_text é o [config], segundo é a conversa
-        first_call_kwargs = client.sources.add_text.call_args_list[0]
-        assert first_call_kwargs.kwargs.get("title") == "[config]"
-
-    @pytest.mark.asyncio
-    async def test_removes_config_source_after_adding(self, req_args):
-        client = _make_client_mock()
-        with patch(
-            "app.services.report_service.NotebookLMClient.from_storage",
-            _fake_from_storage(client),
-        ):
-            await _call_notebooklm_prepare("Usuario Teste", req_args["target_date"], ["msg"])
-
-        client.sources.delete.assert_called_once_with("new-nb-id-abc", "config-src-id")
-
-    @pytest.mark.asyncio
-    async def test_delete_failure_does_not_raise(self, req_args):
-        client = _make_client_mock()
-        client.sources.delete = AsyncMock(side_effect=Exception("delete failed"))
-        with patch(
-            "app.services.report_service.NotebookLMClient.from_storage",
-            _fake_from_storage(client),
-        ):
-            result = await _call_notebooklm_prepare(
-                "Usuario Teste", req_args["target_date"], ["msg"]
-            )
-
-        # Não deve explodir — apenas loga warning
-        assert result.notebook_id == "new-nb-id-abc"
-
-    @pytest.mark.asyncio
     async def test_adds_conversation_source(self, req_args):
         client = _make_client_mock()
         with patch(
@@ -190,9 +143,12 @@ class TestPrepareNotebook:
                 "Usuario Teste", req_args["target_date"], ["[USER] pergunta"]
             )
 
-        # Segundo add_text é a conversa — verifica que foi chamado com conteúdo
-        second_call_kwargs = client.sources.add_text.call_args_list[1]
-        assert "[USER] pergunta" in second_call_kwargs.kwargs.get("content", "")
+        all_calls = client.sources.add_text.call_args_list
+        all_content = " ".join(
+            str(c.kwargs.get("content", "") or (c.args[1] if len(c.args) > 1 else ""))
+            for c in all_calls
+        )
+        assert "[USER] pergunta" in all_content
 
     @pytest.mark.asyncio
     async def test_returns_notebook_id(self, req_args):
@@ -233,6 +189,12 @@ class TestCreateReport:
     def req(self):
         return ReportRequest(notebook_id="nb-123")
 
+    @pytest.fixture
+    def mock_conn(self):
+        conn = AsyncMock()
+        conn.execute = AsyncMock()
+        return conn
+
     def _make_report_client(self, tmp_path):
         """Client que também escreve o arquivo esperado pelo download_report."""
         gen_status = MagicMock()
@@ -245,6 +207,8 @@ class TestCreateReport:
             Path(output_path).write_text("conteúdo do relatório gerado", encoding="utf-8")
 
         client = MagicMock()
+        client.sources.add_text = AsyncMock()
+        client.sources.delete = AsyncMock()
         client.artifacts.generate_report = AsyncMock(return_value=gen_status)
         client.artifacts.wait_for_completion = AsyncMock(return_value=final_status)
         client.artifacts.download_report = AsyncMock(side_effect=fake_download)
@@ -253,7 +217,7 @@ class TestCreateReport:
         return client
 
     @pytest.mark.asyncio
-    async def test_generates_report_and_returns_response(self, req, tmp_path, monkeypatch):
+    async def test_generates_report_and_returns_response(self, req, tmp_path, monkeypatch, mock_conn):
         import app.services.report_service as svc
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
         client = self._make_report_client(tmp_path)
@@ -261,13 +225,13 @@ class TestCreateReport:
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            result = await create_report(req)
+            result = await create_report(mock_conn, req)
 
         assert result.notebook_id == "nb-123"
         assert "conteúdo do relatório gerado" in result.report
 
     @pytest.mark.asyncio
-    async def test_calls_generate_report_with_custom_format(self, req, tmp_path, monkeypatch):
+    async def test_calls_generate_report_with_custom_format(self, req, tmp_path, monkeypatch, mock_conn):
         import app.services.report_service as svc
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
         from notebooklm.rpc import ReportFormat
@@ -276,13 +240,13 @@ class TestCreateReport:
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            await create_report(req)
+            await create_report(mock_conn, req)
 
         call_kwargs = client.artifacts.generate_report.call_args
         assert call_kwargs.kwargs.get("report_format") == ReportFormat.CUSTOM
 
     @pytest.mark.asyncio
-    async def test_raises_on_failed_generation(self, req, tmp_path, monkeypatch):
+    async def test_raises_on_failed_generation(self, req, tmp_path, monkeypatch, mock_conn):
         import app.services.report_service as svc
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
 
@@ -292,6 +256,8 @@ class TestCreateReport:
         final_status.is_failed = True
 
         client = MagicMock()
+        client.sources.add_text = AsyncMock()
+        client.sources.delete = AsyncMock()
         client.artifacts.generate_report = AsyncMock(return_value=gen_status)
         client.artifacts.wait_for_completion = AsyncMock(return_value=final_status)
         client.__aenter__ = AsyncMock(return_value=client)
@@ -304,10 +270,10 @@ class TestCreateReport:
             ),
             pytest.raises(RuntimeError, match="Geração de relatório falhou"),
         ):
-            await create_report(req)
+            await create_report(mock_conn, req)
 
     @pytest.mark.asyncio
-    async def test_saves_report_to_disk(self, req, tmp_path, monkeypatch):
+    async def test_saves_report_to_disk(self, req, tmp_path, monkeypatch, mock_conn):
         import app.services.report_service as svc
         monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
         client = self._make_report_client(tmp_path)
@@ -315,9 +281,23 @@ class TestCreateReport:
             "app.services.report_service.NotebookLMClient.from_storage",
             _fake_from_storage(client),
         ):
-            result = await create_report(req)
+            result = await create_report(mock_conn, req)
 
         assert Path(result.report_path).exists()
+
+    @pytest.mark.asyncio
+    async def test_persists_report_in_database(self, req, tmp_path, monkeypatch, mock_conn):
+        """Verifica que o relatório é persistido no banco após geração."""
+        import app.services.report_service as svc
+        monkeypatch.setattr(svc, "_OUTPUT_DIR", tmp_path)
+        client = self._make_report_client(tmp_path)
+        with patch(
+            "app.services.report_service.NotebookLMClient.from_storage",
+            _fake_from_storage(client),
+        ):
+            await create_report(mock_conn, req)
+
+        mock_conn.execute.assert_called_once()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -343,6 +323,8 @@ class TestCreateSlidesFromNotebook:
         final_status.is_failed = False
 
         client = MagicMock()
+        client.sources.add_text = AsyncMock()
+        client.sources.delete = AsyncMock()
         client.artifacts.generate_slide_deck = AsyncMock(return_value=gen_status)
         client.artifacts.wait_for_completion = AsyncMock(return_value=final_status)
         client.artifacts.download_slide_deck = AsyncMock()
@@ -369,6 +351,8 @@ class TestCreateSlidesFromNotebook:
         final_status.is_failed = False
 
         client = MagicMock()
+        client.sources.add_text = AsyncMock()
+        client.sources.delete = AsyncMock()
         client.artifacts.generate_slide_deck = AsyncMock(return_value=gen_status)
         client.artifacts.wait_for_completion = AsyncMock(return_value=final_status)
         client.artifacts.download_slide_deck = AsyncMock()
