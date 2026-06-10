@@ -31,8 +31,7 @@ def get_api_key(api_key: str = Security(api_key_header)):
 
 router = APIRouter(
     prefix="/report", 
-    tags=["report"],
-    dependencies=[Depends(get_api_key)],
+    tags=["report"]
 )
 
 
