@@ -22,7 +22,6 @@ class ConversationMessageRepository:
     async def fetch_messages_by_user_and_date_range(
         self,
         user_id: UUID,
-        start_date: date,
         end_date: date,
     ) -> List[asyncpg.Record]:
         """
@@ -42,12 +41,10 @@ class ConversationMessageRepository:
             FROM messages m
             JOIN conversations c ON c.id = m.conversation_id
             WHERE c.user_id = $1
-              AND m.created_at::date >= $2
-              AND m.created_at::date <= $3
+              AND m.created_at::date <= $2
               AND m.status = 'ok'
             ORDER BY m.created_at ASC
             """,
             user_id,
-            start_date,
             end_date,
         )

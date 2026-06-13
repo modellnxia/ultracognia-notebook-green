@@ -35,7 +35,7 @@ async def backup_notebooks_daily() -> None:
 
     conn = await asyncpg.connect(dsn=settings.DATABASE_URL)
     try:
-        user_ids = await UserRepository(conn).fetch_users_with_messages_on_date(today)
+        user_ids = await UserRepository(conn).fetch_users_with_messages()
         logger.info("%d usuário(s) com mensagens hoje.", len(user_ids))
 
         created = 0
@@ -46,7 +46,8 @@ async def backup_notebooks_daily() -> None:
                 response = await orchestrate_prepare_notebook(
                     conn=conn,
                     user_id=user_id,
-                    start_date=today,
+                    start_date=date(date.today().year, 1, 1),
+                    end_date=today,
                 )
 
                 if response.from_cache:

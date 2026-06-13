@@ -77,21 +77,18 @@ def _join_messages(messages: list[str]) -> str:
     return _MESSAGE_SEPARATOR.join(msg.strip() for msg in messages if msg.strip())
 
 
-def _build_notebook_title(user_name: str, start_date: date, end_date: date) -> str:
+def _build_notebook_title(user_name: str, end_date: date) -> str:
     """Gera o título padrão do notebook no formato Nome_Usuario-Data ou Nome_Usuario-Start_a_End."""
-    formatted_name = user_name.replace(" ", "_")
-    if start_date == end_date:
-        date_str = str(start_date)
-    else:
-        date_str = f"{start_date}_a_{end_date}"
-    return f"{formatted_name}-{date_str}"
+    formatted_name = "Conversas de " + user_name.replace(" ", "_")
+    
+    return f"{formatted_name}"
 
 
 # ── Integrações privadas com NotebookLM ─────────────────────────────────────
 
 
 async def _call_notebooklm_prepare(
-    user_name: str, start_date: date, end_date: date, messages: list[str]
+    user_name: str, end_date: date, messages: list[str], notebook_id: str  
 ) -> PrepareNotebookResponse:
     """
     Integração direta com a API do NotebookLM. Não acessa banco de dados.
@@ -102,36 +99,41 @@ async def _call_notebooklm_prepare(
       4. Retorna notebook_id e notebook_title.
     """
     unified_text = _join_messages(messages)
-    titled = _build_notebook_title(user_name, start_date, end_date)
+    titled = _build_notebook_title(user_name, end_date)
 
     async with await NotebookLMClient.from_storage() as client:
-        # 1. Cria o notebook
-        logger.info("Criando notebook: '%s'", titled)
-        nb = await client.notebooks.create(titled)
-        nb_id = nb.id
-        logger.debug("Notebook criado — ID: %s", nb_id)
+        if (notebook_id):
+            fontes_atuais = await client.sources.list(notebook_id=notebook_id)
+            
+            if (fontes_atuais):
+                for fonte in fontes_atuais:
+                    print(f"Deletando fonte: {fonte.title} (ID: {fonte.id})")
+                    # Deleta cada fonte individualmente usando o ID
+                    await client.sources.delete(notebook_id=notebook_id, source_id=fonte.id)
 
-        if start_date == end_date:
-            source_title = f"Histórico de Conversa - {start_date.strftime('%d/%m/%Y')}"
         else:
-            source_title = f"Histórico de Conversa - {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"
-
+            # 1. Cria o notebook
+            logger.info("Criando notebook: '%s'", titled)
+            nb = await client.notebooks.create(titled)
+            notebook_id = nb.id
+            logger.debug("Notebook criado — ID: %s", notebook_id)
+                    
         # 2. Adiciona conversa como fonte principal
         conv_source = await client.sources.add_text(
-            nb_id,
+            notebook_id,
             content=unified_text,
-            title=source_title,
+            title=titled,
             wait=True,
         )
         logger.debug(
             "Fonte de conversa adicionada — source_id: %s (%d chars)",
             conv_source.id,
             len(unified_text),
-        )
+        )  
 
-    logger.info("Notebook preparado — ID: %s, título: %s", nb_id, titled)
+    logger.info("Notebook preparado — ID: %s, título: %s", notebook_id, titled)
     return PrepareNotebookResponse(
-        notebook_id=nb_id,
+        notebook_id=notebook_id,
         notebook_title=titled,
         from_cache=False,
     )
@@ -169,20 +171,21 @@ async def orchestrate_prepare_notebook(
         end_date = start_date
 
     # 1. Checa cache no banco
+    cached = False
     if not force_recreate:
-        cached = await nb_repo.get_notebook_by_user_and_date_range(
-            user_id, start_date, end_date
+        cached = await nb_repo.get_notebook_by_user(
+            user_id
         )
         if cached:
             logger.info(
                 "Notebook encontrado no cache — notebook_id: %s",
                 cached["notebook_id"],
             )
-            return PrepareNotebookResponse(
-                notebook_id=cached["notebook_id"],
-                notebook_title=cached["notebook_title"],
-                from_cache=True,
-            )
+            #return PrepareNotebookResponse(
+            #    notebook_id=cached["notebook_id"],
+            #    notebook_title=cached["notebook_title"],
+            #    from_cache=True,
+            #)
     else:
         logger.info("Recriação forçada solicitada (bypassing cache)")
 
@@ -195,30 +198,30 @@ async def orchestrate_prepare_notebook(
     # 3. Busca mensagens do dia ou range
     conv_repo = ConversationMessageRepository(conn)
     rows = await conv_repo.fetch_messages_by_user_and_date_range(
-        user_id, start_date, end_date
+        user_id, end_date
     )
     if not rows:
         if start_date == end_date:
             raise ValueError(
-                f"Nenhuma mensagem encontrada para user_id={user_id} na data {start_date}"
+                f"Nenhuma mensagem encontrada para user_id={user_id} até a data {end_date}"
             )
         raise ValueError(
-            f"Nenhuma mensagem encontrada para user_id={user_id} entre {start_date} e {end_date}"
+            f"Nenhuma mensagem encontrada para user_id={user_id} até a data {end_date}"
         )
     messages = [f"[{row['role'].upper()}] {row['content']}" for row in rows]
     logger.info(
         "%d mensagem(ns) encontrada(s) para user_id=%s.", len(messages), user_id
     )
 
+    notebook_id = cached["notebook_id"] if cached else None
     # 4. Cria notebook no NotebookLM
-    response = await _call_notebooklm_prepare(user_name, start_date, end_date, messages)
+    response = await _call_notebooklm_prepare(user_name, end_date, messages, notebook_id)
 
     # 5. Persiste no banco
     await nb_repo.save_notebook_id(
         user_id=user_id,
         notebook_id=response.notebook_id,
         notebook_title=response.notebook_title,
-        start_date=start_date,
         end_date=end_date,
     )
     logger.info("Notebook salvo no banco — notebook_id: %s", response.notebook_id)

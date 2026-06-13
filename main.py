@@ -1,10 +1,11 @@
 import logging
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from app.routers.report import router as report_router
 from app.core.database import create_pool, close_pool
 from app.scheduler.scheduler import create_scheduler
+from fastapi.responses import JSONResponse
 
 logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper()),
@@ -24,8 +25,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="brain_notebooklm", lifespan=lifespan)
 
-app.include_router(report_router)
+@app.middleware("http")
+async def validar_acesso(request: Request, call_next):
+    path = request.url.path
+    if path in ["/", "/docs", "/openapi.json"] or "login" in path:
+        return await call_next(request)
+        
+    api_key = request.headers.get("x-api-key");
+    API_KEY = os.getenv("API_KEY", "")
 
+    if api_key != API_KEY:
+        return JSONResponse(status_code=403, content={"detail": "Não autorizado"})
+
+    return await call_next(request)
+
+app.include_router(report_router)
 
 @app.get("/health")
 def health():

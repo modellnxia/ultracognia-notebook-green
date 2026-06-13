@@ -31,13 +31,33 @@ class NotebookRepository:
             start_date,
             end_date,
         )
-
+    
+    async def get_notebook_by_user(
+        self, user_id: UUID
+    ) -> Optional[asyncpg.Record]:
+        """
+        Busca um notebook gerado previamente para um usuário em uma data específica.
+        Retorna None se não existir.
+        """
+        return await self.conn.fetchrow(
+            """
+            SELECT
+                notebook_id,
+                notebook_title,
+                report_content,
+                report_path
+            FROM notebooks
+            WHERE user_id = $1 
+            LIMIT 1
+            """,
+            user_id
+        )
+    
     async def save_notebook_id(
         self,
         user_id: UUID,
         notebook_id: str,
         notebook_title: str,
-        start_date: date,
         end_date: date,
     ) -> None:
         """
@@ -50,18 +70,12 @@ class NotebookRepository:
                 user_id,
                 notebook_id,
                 notebook_title,
-                start_date,
                 end_date
-            ) VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (user_id, start_date, end_date) DO UPDATE SET
-                notebook_id = EXCLUDED.notebook_id,
-                notebook_title = EXCLUDED.notebook_title,
-                created_at = CURRENT_TIMESTAMP
+            ) VALUES ($1, $2, $3, $4)
             """,
             user_id,
             notebook_id,
             notebook_title,
-            start_date,
             end_date,
         )
 
