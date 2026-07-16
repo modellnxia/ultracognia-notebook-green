@@ -79,7 +79,7 @@ def _join_messages(messages: list[str]) -> str:
 
 def _build_notebook_title(user_name: str, end_date: date) -> str:
     """Gera o título padrão do notebook no formato Nome_Usuario-Data ou Nome_Usuario-Start_a_End."""
-    formatted_name = "Conversas de " + user_name.replace(" ", "_")
+    formatted_name = "Conversas de " + user_name + " até " + end_date.strftime("%d/%m/%Y")
     
     return f"{formatted_name}"
 
@@ -99,24 +99,33 @@ async def _call_notebooklm_prepare(
       4. Retorna notebook_id e notebook_title.
     """
     unified_text = _join_messages(messages)
+    
     titled = _build_notebook_title(user_name, end_date)
 
-    async with await NotebookLMClient.from_storage() as client:
-        if (notebook_id):
-            fontes_atuais = await client.sources.list(notebook_id=notebook_id)
-            
-            if (fontes_atuais):
-                for fonte in fontes_atuais:
-                    print(f"Deletando fonte: {fonte.title} (ID: {fonte.id})")
-                    # Deleta cada fonte individualmente usando o ID
-                    await client.sources.delete(notebook_id=notebook_id, source_id=fonte.id)
+    nome_do_arquivo = f"{titled}.txt".replace("/", "-")
 
-        else:
-            # 1. Cria o notebook
-            logger.info("Criando notebook: '%s'", titled)
-            nb = await client.notebooks.create(titled)
-            notebook_id = nb.id
-            logger.debug("Notebook criado — ID: %s", notebook_id)
+    # O modo 'w' garante a substituição ou criação
+    with open(nome_do_arquivo, 'w', encoding='utf-8') as arquivo:
+        arquivo.write(unified_text)
+
+    print(f"Arquivo '{nome_do_arquivo}' foi criado ou substituído.")
+
+    async with await NotebookLMClient.from_storage() as client:
+        #if (notebook_id):
+        #    fontes_atuais = await client.sources.list(notebook_id=notebook_id)
+        #    
+        #    if (fontes_atuais):
+        #        for fonte in fontes_atuais:
+        #            print(f"Deletando fonte: {fonte.title} (ID: {fonte.id})")
+        #            # Deleta cada fonte individualmente usando o ID
+        #            await client.sources.delete(notebook_id=notebook_id, source_id=fonte.id)
+        #
+        #else:
+        # 1. Cria o notebook
+        logger.info("Criando notebook: '%s'", titled)
+        nb = await client.notebooks.create(titled)
+        notebook_id = nb.id
+        logger.debug("Notebook criado — ID: %s", notebook_id)
                     
         # 2. Adiciona conversa como fonte principal
         conv_source = await client.sources.add_text(
@@ -218,13 +227,13 @@ async def orchestrate_prepare_notebook(
     response = await _call_notebooklm_prepare(user_name, end_date, messages, notebook_id)
 
     # 5. Persiste no banco
-    await nb_repo.save_notebook_id(
-        user_id=user_id,
-        notebook_id=response.notebook_id,
-        notebook_title=response.notebook_title,
-        end_date=end_date,
-    )
-    logger.info("Notebook salvo no banco — notebook_id: %s", response.notebook_id)
+    #await nb_repo.save_notebook_id(
+    #    user_id=user_id,
+    #    notebook_id=response.notebook_id,
+    #    notebook_title=response.notebook_title,
+    #    end_date=end_date,
+    #)
+    #logger.info("Notebook salvo no banco — notebook_id: %s", response.notebook_id)
 
     return response
 
