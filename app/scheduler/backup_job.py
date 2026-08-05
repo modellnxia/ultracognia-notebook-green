@@ -8,11 +8,10 @@ O job é disparado pelo APScheduler (ver app/scheduler/scheduler.py) e
 abre sua própria conexão ao banco independente do pool do FastAPI.
 """
 
-import asyncpg
 import logging
 from datetime import date
 
-from app.core.settings import settings
+from app.core.database import connect_with_retry
 from app.repositories.users import UserRepository
 from app.services.report_service import orchestrate_prepare_notebook
 
@@ -33,7 +32,7 @@ async def backup_notebooks_daily() -> None:
     today = date.today()
     logger.info("Iniciando backup diário de notebooks — data: %s", today)
 
-    conn = await asyncpg.connect(dsn=settings.DATABASE_URL)
+    conn = await connect_with_retry()
     try:
         user_ids = await UserRepository(conn).fetch_users_with_messages()
         logger.info("%d usuário(s) com mensagens hoje.", len(user_ids))

@@ -19,7 +19,8 @@ def create_scheduler() -> AsyncIOScheduler:
     O job é registrado com `replace_existing=True` para que reinícios
     da aplicação não criem entradas duplicadas no scheduler.
 
-    Horário configurável via variáveis de ambiente:
+    Executa apenas às sextas-feiras. Horário configurável via variáveis
+    de ambiente:
       BACKUP_SCHEDULE_HOUR   (padrão: 23)
       BACKUP_SCHEDULE_MINUTE (padrão: 0)
     """
@@ -28,6 +29,7 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(
         backup_notebooks_daily,
         trigger="cron",
+        day_of_week="fri",
         hour=settings.BACKUP_SCHEDULE_HOUR,
         minute=settings.BACKUP_SCHEDULE_MINUTE,
         id="backup_notebooks_daily",

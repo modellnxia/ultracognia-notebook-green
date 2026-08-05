@@ -12,7 +12,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await create_pool()
@@ -21,7 +20,6 @@ async def lifespan(app: FastAPI):
     yield
     scheduler.shutdown()
     await close_pool()
-
 
 app = FastAPI(title="brain_notebooklm", lifespan=lifespan)
 

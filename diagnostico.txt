@@ -1,0 +1,31 @@
+Total de blocos separados por '---': 36
+
+Contagem por role: {'USER': 14, 'ASSISTANT': 14, 'outro': 8}
+
+Tamanho total do texto: 74341 caracteres
+
+Blocos 'outro' (não começam com [USER]/[ASSISTANT]) - indice, tamanho, preview:
+  [2] len=4216: ? DIAGN?STICO CENTRAL
+
+Voc? n?o enfrenta apenas um desvio de conduta individual, mas uma **Quebra Sist?mica de Governan?
+  [5] len=3902: ? DIAGN?STICO CENTRAL
+
+O cen?rio configura uma **Fal?ncia de Governan?a por Captura de Agentes (Principal-Agent Problem)
+  [12] len=4449: ? DIAGN?STICO CENTRAL
+
+Sua estrat?gia de "Acordo sob Evid?ncia" ? a manobra de **Risk Mitigation** mais l?cida para o co
+  [15] len=4185: ? DIAGN?STICO CENTRAL
+
+Sua abordagem de "Acordo sob Evid?ncia" ? a execu??o t?cnica do conceito de **Corte de Perda M?xi
+  [26] len=3772: ? DIAGN?STICO CENTRAL
+
+Os ?ltimos di?logos consolidam a transi??o de uma **crise de governan?a passiva** (suspeita de de
+  [29] len=3118: ? DIAGN?STICO CENTRAL
+
+O plano consiste na **retomada soberana da opera??o em Portugal** atrav?s de um desligamento cir?
+  [32] len=3801: ? DIAGN?STICO CENTRAL
+
+O cap?tulo n?o deve focar no "onde" voc? esteve, mas no "como" voc? enxergou as engrenagens invis
+  [35] len=4064: ? DIAGN?STICO CENTRAL
+
+O sucesso deste cap?tulo depende de voc? n?o se comportar como um autor, mas como um **Advisor** 
