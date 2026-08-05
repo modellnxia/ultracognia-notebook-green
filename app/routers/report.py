@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Depends, Security, status
 from fastapi.security import APIKeyHeader
+from fastapi.responses import FileResponse
 from app.core.settings import settings
 from app.models.report import (
     ReportRequest,
@@ -13,6 +16,7 @@ from app.services.report_service import (
     create_report,
     create_slides_from_notebook,
     orchestrate_prepare_notebook,
+    get_generation_status,
 )
 from app.core.database import get_db_conn
 import logging
@@ -72,6 +76,41 @@ async def create_slides_endpoint(req: NotebookRequest):
     except Exception as e:
         logger.exception("Erro ao gerar slides no NotebookLM")
         raise HTTPException(status_code=500, detail=f"Erro ao gerar slides: {str(e)}")
+
+
+@router.get("/download-slides/{notebook_id}")
+async def download_slides_endpoint(notebook_id: str):
+    """
+    Baixa o PDF do slide deck gerado por POST /report/create-slides.
+
+    O arquivo é salvo em OUTPUT_DIR/{notebook_id}_slides.pdf no momento da
+    criação (ver create_slides_from_notebook em report_service.py) — esse
+    endpoint só serve o arquivo já existente, não gera nada novo.
+    """
+    slides_path = Path(settings.OUTPUT_DIR) / f"{notebook_id}_slides.pdf"
+    if not slides_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Slides não encontrados para notebook_id={notebook_id}. "
+            "Gere via POST /report/create-slides primeiro.",
+        )
+    return FileResponse(
+        path=slides_path,
+        media_type="application/pdf",
+        filename=f"{notebook_id}_slides.pdf",
+    )
+
+
+@router.get("/generation-status/{notebook_id}")
+async def generation_status_endpoint(notebook_id: str):
+    """
+    Status mais recente (em memória, por processo) da geração de relatório/
+    slides em andamento para esse notebook_id — usado pela barra de progresso
+    da interface de teste. Estados vêm direto do NotebookLM: pending,
+    in_progress, completed, failed, not_found, removed. "unknown" quando
+    nada foi rastreado ainda (geração não iniciada, ou API reiniciou).
+    """
+    return get_generation_status(notebook_id) or {"status": "unknown"}
 
 
 @router.post("/prepare-notebook", response_model=PrepareNotebookResponse)

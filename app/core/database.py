@@ -60,7 +60,7 @@ async def _with_connect_retry(
             await asyncio.sleep(retry_interval)
 
 
-async def create_pool(max_wait_seconds: float = 90.0, retry_interval: float = 5.0) -> None:
+async def create_pool(max_wait_seconds: float = 420.0, retry_interval: float = 5.0) -> None:
     global _pool
     _pool = await _with_connect_retry(
         lambda: asyncpg.create_pool(
@@ -78,7 +78,7 @@ async def create_pool(max_wait_seconds: float = 90.0, retry_interval: float = 5.
 
 
 async def connect_with_retry(
-    max_wait_seconds: float = 90.0, retry_interval: float = 5.0
+    max_wait_seconds: float = 420.0, retry_interval: float = 5.0
 ) -> asyncpg.Connection:
     """
     Conexão avulsa (fora do pool do FastAPI) com o mesmo retry/backoff de

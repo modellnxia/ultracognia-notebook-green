@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Testador — ultracognia-notebook-green</title>
+<style>
+  :root {
+    --bg: #faf9f6;
+    --panel: #ffffff;
+    --ink: #1a1f1c;
+    --muted: #5b655d;
+    --line: #dfe3de;
+    --accent: #2f6f4f;
+    --accent-ink: #ffffff;
+    --accent-soft: #e6f0e9;
+    --ok: #2f7d4f;
+    --ok-soft: #e7f4ec;
+    --err: #b23b34;
+    --err-soft: #fbeae8;
+    --mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141712; --panel: #1b201a; --ink: #eef1ec; --muted: #9aa79c;
+      --line: #2b332b; --accent: #59b585; --accent-ink: #0d1410; --accent-soft: #1e2e24;
+      --ok: #5cc98a; --ok-soft: #17251c; --err: #ef7a72; --err-soft: #2c1917;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--ink); font-family: var(--sans);
+    margin: 0; padding: 1.75rem 1.5rem 4rem; line-height: 1.5;
+  }
+  .wrap { max-width: 1700px; margin: 0 auto; }
+  header { max-width: 760px; margin-bottom: 1.5rem; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 0.76rem; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 0.4rem;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 0.3rem; }
+  .sub { color: var(--muted); font-size: 0.9rem; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 1.25rem 1.4rem; margin-bottom: 1.1rem; max-width: 760px;
+  }
+  .panel.wide { max-width: none; }
+  .panel h2 {
+    font-size: 0.95rem; margin: 0 0 0.9rem; display: flex; align-items: center; gap: 0.5rem;
+  }
+  .panel h2 .badge {
+    font-family: var(--mono); font-size: 0.68rem; background: var(--accent-soft);
+    color: var(--accent); padding: 0.12rem 0.45rem; border-radius: 999px;
+  }
+  .panel p.help { color: var(--muted); font-size: 0.84rem; margin: -0.4rem 0 0.9rem; }
+
+  .row { display: flex; gap: 0.7rem; flex-wrap: wrap; margin-bottom: 0.7rem; }
+  .field { flex: 1 1 200px; display: flex; flex-direction: column; gap: 0.3rem; }
+  .field.check { flex: 0 0 auto; flex-direction: row; align-items: center; gap: 0.45rem; }
+  label { font-size: 0.78rem; color: var(--muted); }
+  input[type=text], input[type=date] {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 7px;
+    padding: 0.5rem 0.6rem; font-size: 0.88rem; color: var(--ink); font-family: var(--mono);
+    width: 100%;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  button {
+    background: var(--accent); color: var(--accent-ink); border: none; border-radius: 7px;
+    padding: 0.55rem 1.1rem; font-size: 0.87rem; font-weight: 600; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.06); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  button.secondary { background: var(--accent-soft); color: var(--accent); }
+
+  .result {
+    margin-top: 0.8rem; border-radius: 8px; padding: 0.6rem 0.85rem;
+    font-family: var(--mono); font-size: 0.8rem; white-space: pre-wrap; word-break: break-word;
+    display: none; max-height: 200px; overflow: auto;
+  }
+  .result.show { display: block; }
+  .result.ok { background: var(--ok-soft); color: var(--ok); }
+  .result.err { background: var(--err-soft); color: var(--err); }
+  .result.pending { background: var(--accent-soft); color: var(--accent); }
+
+  /* Barra de progresso "real": largura definida por JS a partir do estado
+     verdadeiro reportado pelo NotebookLM (pending/in_progress/completed/...),
+     via polling em /report/generation-status/{id}. Não é um percentual
+     contínuo — o NotebookLM só expõe esses estados discretos — mas reflete
+     dado de backend de verdade, não uma animação decorativa. */
+  .progress {
+    display: none; height: 8px; background: var(--accent-soft); border-radius: 999px;
+    overflow: hidden; margin: 0.8rem 0;
+  }
+  .progress.show { display: block; }
+  .progress .bar {
+    height: 100%; width: 6%; background: var(--accent); border-radius: 999px;
+    transition: width 0.5s ease, background-color 0.3s ease;
+  }
+  .progress .bar.bar-err { background: var(--err); }
+  .progress-label { font-size: 0.78rem; color: var(--muted); margin: -0.4rem 0 0.4rem; display: none; }
+
+  /* Painéis "Gerar relatório" / "Criar slides": formulário + saída lado a lado,
+     usando o máximo de largura disponível na tela. */
+  .report-layout { display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap; }
+  .report-form { flex: 1 1 300px; min-width: 260px; }
+  .report-output {
+    flex: 3 1 560px; min-width: 320px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1.4rem 1.6rem; max-height: min(85vh, 1000px); overflow: auto;
+  }
+  .report-output .placeholder { color: var(--muted); font-size: 0.88rem; margin: 0; }
+  .report-header {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
+    margin-bottom: 1rem; padding-bottom: 0.9rem; border-bottom: 1px solid var(--line);
+  }
+  .report-header strong { display: block; font-size: 1rem; margin-bottom: 0.15rem; }
+  .report-header .report-id { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+  .report-header button { flex: none; }
+
+  .markdown-body { font-family: var(--serif); font-size: 1rem; line-height: 1.7; max-width: 78ch; }
+  .markdown-body h1, .markdown-body h2, .markdown-body h3,
+  .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+    font-family: var(--sans); color: var(--ink); text-wrap: balance; line-height: 1.3;
+    margin: 1.4em 0 0.5em;
+  }
+  .markdown-body h1 { font-size: 1.4rem; border-bottom: 1px solid var(--line); padding-bottom: 0.4rem; }
+  .markdown-body h2 { font-size: 1.2rem; }
+  .markdown-body h3 { font-size: 1.05rem; color: var(--accent); }
+  .markdown-body h4, .markdown-body h5, .markdown-body h6 { font-size: 0.95rem; }
+  .markdown-body p { margin: 0.7em 0; }
+  .markdown-body strong { color: var(--ink); }
+  .markdown-body ul, .markdown-body ol { padding-left: 1.4em; margin: 0.6em 0; }
+  .markdown-body li { margin: 0.3em 0; }
+  .markdown-body code {
+    font-family: var(--mono); background: var(--accent-soft); padding: 0.1em 0.35em;
+    border-radius: 4px; font-size: 0.86em;
+  }
+  .markdown-body pre { background: var(--accent-soft); padding: 0.9rem 1rem; border-radius: 8px; overflow-x: auto; }
+  .markdown-body pre code { background: none; padding: 0; }
+  .markdown-body blockquote {
+    border-left: 3px solid var(--accent); margin: 0.8em 0; padding: 0.2em 1em;
+    color: var(--muted); font-style: italic;
+  }
+  .markdown-body hr { border: none; border-top: 1px solid var(--line); margin: 2em 0; }
+  .markdown-body a { color: var(--accent); }
+
+  .pdf-embed { width: 100%; height: min(82vh, 960px); border: none; border-radius: 6px; display: block; }
+
+  .log {
+    font-family: var(--mono); font-size: 0.78rem; max-height: 260px; overflow: auto;
+  }
+  .log .entry { padding: 0.4rem 0; border-bottom: 1px solid var(--line); }
+  .log .entry:last-child { border-bottom: none; }
+  .log .entry .top { display: flex; justify-content: space-between; gap: 0.5rem; color: var(--muted); }
+  .log .status-ok { color: var(--ok); font-weight: 600; }
+  .log .status-err { color: var(--err); font-weight: 600; }
+  .log .empty { color: var(--muted); }
+
+  footer { color: var(--muted); font-size: 0.78rem; text-align: center; margin-top: 1.5rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">ultracognia-notebook-green · teste manual</p>
+    <h1>Testador de funcionalidades</h1>
+    <p class="sub">Interface local para testar os endpoints de <code>report_service.py</code> sem precisar de <code>curl</code>. Requer a API rodando (<code>uvicorn main:app</code>) com <code>ENV=local</code> no <code>.env</code>.</p>
+  </header>
+
+  <div class="panel">
+    <h2>Conexão</h2>
+    <div class="row">
+      <div class="field">
+        <label for="baseUrl">URL da API</label>
+        <input type="text" id="baseUrl" value="http://localhost:8004">
+      </div>
+      <div class="field">
+        <label for="apiKey">x-api-key</label>
+        <input type="text" id="apiKey" placeholder="sua API_KEY do .env">
+      </div>
+    </div>
+    <button id="btnHealth">Testar conexão (/health)</button>
+    <div id="resHealth" class="result"></div>
+  </div>
+
+  <div class="panel">
+    <h2>1. Preparar notebook <span class="badge">POST /report/prepare-notebook</span></h2>
+    <p class="help">Busca todo o histórico de conversas do usuário e cria (ou reaproveita, se já feito hoje) um notebook no NotebookLM.</p>
+    <div class="row">
+      <div class="field">
+        <label for="pnUserId">user_id (UUID)</label>
+        <input type="text" id="pnUserId" placeholder="13d32c21-0432-43b7-b787-cae9eb4f42b2">
+      </div>
+      <div class="field">
+        <label for="pnStart">start_date</label>
+        <input type="date" id="pnStart" value="2020-01-01">
+      </div>
+      <div class="field">
+        <label for="pnEnd">end_date</label>
+        <input type="date" id="pnEnd">
+      </div>
+      <div class="field check">
+        <input type="checkbox" id="pnForce">
+        <label for="pnForce" style="margin:0">force_recreate</label>
+      </div>
+    </div>
+    <button id="btnPrepare">Preparar notebook</button>
+    <div id="resPrepare" class="result"></div>
+  </div>
+
+  <div class="panel wide">
+    <h2>2. Gerar relatório <span class="badge">POST /report/generate</span></h2>
+    <p class="help">Gera o relatório em Markdown de um notebook já preparado (use o notebook_id retornado no passo 1). Pode levar alguns minutos.</p>
+    <div class="report-layout">
+      <div class="report-form">
+        <div class="row">
+          <div class="field">
+            <label for="grNotebookId">notebook_id</label>
+            <input type="text" id="grNotebookId" placeholder="notebook_id retornado acima">
+          </div>
+          <div class="field">
+            <label for="grTitle">notebook_title (opcional)</label>
+            <input type="text" id="grTitle" placeholder="deixe em branco para usar o notebook_id">
+          </div>
+        </div>
+        <button id="btnGenerate">Gerar relatório</button>
+        <div id="genProgress" class="progress"><div class="bar" id="genProgressBar"></div></div>
+        <div id="genProgressLabel" class="progress-label"></div>
+        <div id="resGenerate" class="result"></div>
+      </div>
+      <div class="report-output" id="reportOutput">
+        <p class="placeholder">O relatório aparece aqui, formatado, depois de gerado.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel wide">
+    <h2>3. Criar slides <span class="badge">POST /report/create-slides</span></h2>
+    <p class="help">Gera o slide deck (PDF) de um notebook já preparado. Pode levar alguns minutos.</p>
+    <div class="report-layout">
+      <div class="report-form">
+        <div class="row">
+          <div class="field">
+            <label for="csNotebookId">notebook_id</label>
+            <input type="text" id="csNotebookId" placeholder="notebook_id retornado acima">
+          </div>
+        </div>
+        <button id="btnSlides">Criar slides</button>
+        <div id="slidesProgress" class="progress"><div class="bar" id="slidesProgressBar"></div></div>
+        <div id="slidesProgressLabel" class="progress-label"></div>
+        <div id="resSlides" class="result"></div>
+      </div>
+      <div class="report-output" id="slidesOutput">
+        <p class="placeholder">O PDF aparece aqui depois de gerado.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Histórico de chamadas desta sessão <button class="secondary" id="btnClearLog" style="float:right; padding:0.2rem 0.6rem; font-size:0.75rem;">limpar</button></h2>
+    <div class="log" id="log"><div class="empty">Nenhuma chamada ainda.</div></div>
+  </div>
+
+  <footer>Nada aqui é enviado a lugar nenhum além da URL da API configurada acima — é um arquivo local, sem telemetria.</footer>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const baseUrlEl = $("baseUrl"), apiKeyEl = $("apiKey");
+
+  // Lembra URL/API key entre recarregamentos (só neste navegador)
+  baseUrlEl.value = localStorage.getItem("tester_baseUrl") || baseUrlEl.value;
+  apiKeyEl.value = localStorage.getItem("tester_apiKey") || "";
+  baseUrlEl.addEventListener("change", () => localStorage.setItem("tester_baseUrl", baseUrlEl.value));
+  apiKeyEl.addEventListener("change", () => localStorage.setItem("tester_apiKey", apiKeyEl.value));
+
+  // Data de hoje como default do end_date
+  $("pnEnd").value = new Date().toISOString().slice(0, 10);
+
+  const logEl = $("log");
+  function addLog(method, path, status, ok, summary) {
+    if (logEl.querySelector(".empty")) logEl.innerHTML = "";
+    const entry = document.createElement("div");
+    entry.className = "entry";
+    const time = new Date().toLocaleTimeString("pt-BR");
+    entry.innerHTML = `<div class="top"><span>${method} ${path}</span><span>${time}</span></div>
+      <div class="${ok ? "status-ok" : "status-err"}">${status} ${ok ? "OK" : "ERRO"}</div>
+      <div>${summary}</div>`;
+    logEl.prepend(entry);
+  }
+  $("btnClearLog").addEventListener("click", () => {
+    logEl.innerHTML = '<div class="empty">Nenhuma chamada ainda.</div>';
+  });
+
+  // fetch "cru" — sem tocar em DOM, reaproveitado por todas as chamadas
+  async function doFetch(method, path, body) {
+    const url = baseUrlEl.value.replace(/\/+$/, "") + path;
+    const opts = { method, headers: { "x-api-key": apiKeyEl.value } };
+    if (body) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    const resp = await fetch(url, opts);
+    const text = await resp.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = text; }
+    return { ok: resp.ok, status: resp.status, data };
+  }
+
+  // Usado por /health, prepare-notebook e create-slides (chamadas curtas) —
+  // mostra o JSON cru no bloco de resultado.
+  async function call(method, path, body, resultEl, summaryFn) {
+    resultEl.className = "result show pending";
+    resultEl.textContent = "Chamando...";
+    try {
+      const { ok, status, data } = await doFetch(method, path, body);
+      resultEl.className = "result show " + (ok ? "ok" : "err");
+      resultEl.textContent = JSON.stringify(data, null, 2);
+      addLog(method, path, status, ok, summaryFn ? summaryFn(data, ok) : (ok ? "sucesso" : "falhou"));
+      return { ok, data };
+    } catch (e) {
+      resultEl.className = "result show err";
+      resultEl.textContent = "Falha de rede: " + e.message +
+        "\n\nChecagens comuns:\n- A API está rodando? (uvicorn main:app --port 8004)\n" +
+        "- ENV=local está setado no .env da API? (necessário para CORS)\n" +
+        "- A URL acima está correta?";
+      addLog(method, path, "—", false, "falha de rede: " + e.message);
+      return { ok: false, data: null };
+    }
+  }
+
+  $("btnHealth").addEventListener("click", async () => {
+    $("btnHealth").disabled = true;
+    await call("GET", "/health", null, $("resHealth"), (d) => `status: ${d.status}`);
+    $("btnHealth").disabled = false;
+  });
+
+  $("btnPrepare").addEventListener("click", async () => {
+    const userId = $("pnUserId").value.trim();
+    if (!userId) { alert("Preencha o user_id."); return; }
+    const body = {
+      user_id: userId,
+      start_date: $("pnStart").value,
+      end_date: $("pnEnd").value || undefined,
+      force_recreate: $("pnForce").checked,
+    };
+    $("btnPrepare").disabled = true;
+    const { ok, data } = await call("POST", "/report/prepare-notebook", body, $("resPrepare"),
+      (d, ok) => ok ? `notebook_id: ${d.notebook_id}${d.from_cache ? " (reaproveitado)" : " (novo)"}` : (d.detail || "erro"));
+    if (ok && data && data.notebook_id) {
+      $("grNotebookId").value = data.notebook_id;
+      $("csNotebookId").value = data.notebook_id;
+    }
+    $("btnPrepare").disabled = false;
+  });
+
+  // ── Barra de progresso real: consulta GET /report/generation-status/{id} ───
+  // Estados vindos do NotebookLM (pending/in_progress/completed/failed/...)
+  // mapeados pra uma largura de barra — não é percentual exato porque a API
+  // não expõe isso, mas cada mudança de estágio reflete um evento real.
+
+  const STATUS_PCT = {
+    unknown: 8, pending: 20, in_progress: 65,
+    completed: 100, failed: 100, not_found: 25, removed: 100,
+  };
+  const STATUS_LABEL = {
+    unknown: "Iniciando...", pending: "Na fila do NotebookLM...",
+    in_progress: "Gerando no NotebookLM...", completed: "Concluído",
+    failed: "Falhou", not_found: "Aguardando início...", removed: "Removido pelo servidor",
+  };
+
+  function startStatusPolling(notebookId, barEl, labelEl) {
+    let stopped = false;
+    barEl.style.width = STATUS_PCT.unknown + "%";
+    barEl.classList.remove("bar-err");
+    labelEl.textContent = STATUS_LABEL.unknown;
+    labelEl.style.display = "block";
+
+    async function tick() {
+      if (stopped) return;
+      try {
+        const { data } = await doFetch("GET", "/report/generation-status/" + encodeURIComponent(notebookId), null);
+        const st = (data && data.status) || "unknown";
+        barEl.style.width = (STATUS_PCT[st] ?? 50) + "%";
+        barEl.classList.toggle("bar-err", st === "failed");
+        labelEl.textContent = STATUS_LABEL[st] || st;
+      } catch (e) {
+        // Silencioso — isso é só feedback visual, não deve interromper o fluxo principal.
+      }
+      if (!stopped) setTimeout(tick, 1500);
+    }
+    tick();
+    return () => { stopped = true; };
+  }
+
+  // ── Relatório: renderização de markdown, inline na própria página ──────────
+
+  function renderMarkdown(md) {
+    const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    let html = esc(md || "");
+
+    html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${code.trim()}</code></pre>`);
+    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+    html = html.replace(/^###### (.*)$/gm, "<h6>$1</h6>");
+    html = html.replace(/^##### (.*)$/gm, "<h5>$1</h5>");
+    html = html.replace(/^#### (.*)$/gm, "<h4>$1</h4>");
+    html = html.replace(/^### (.*)$/gm, "<h3>$1</h3>");
+    html = html.replace(/^## (.*)$/gm, "<h2>$1</h2>");
+    html = html.replace(/^# (.*)$/gm, "<h1>$1</h1>");
+    html = html.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
+    html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    html = html.replace(/^---+$/gm, "<hr>");
+    html = html.replace(/^&gt; (.*)$/gm, "<blockquote>$1</blockquote>");
+
+    const lines = html.split("\n");
+    const out = [];
+    let inUl = false, inOl = false, paraBuf = [];
+    const flushPara = () => {
+      const text = paraBuf.join(" ").trim();
+      if (text) out.push(`<p>${text}</p>`);
+      paraBuf = [];
+    };
+    const closeLists = () => {
+      if (inUl) { out.push("</ul>"); inUl = false; }
+      if (inOl) { out.push("</ol>"); inOl = false; }
+    };
+
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (/^<(h[1-6]|hr|blockquote|pre)/.test(line)) { flushPara(); closeLists(); out.push(line); continue; }
+      const ul = line.match(/^[-*]\s+(.*)$/);
+      const ol = line.match(/^\d+\.\s+(.*)$/);
+      if (ul) {
+        flushPara();
+        if (inOl) { out.push("</ol>"); inOl = false; }
+        if (!inUl) { out.push("<ul>"); inUl = true; }
+        out.push(`<li>${ul[1]}</li>`);
+        continue;
+      }
+      if (ol) {
+        flushPara();
+        if (inUl) { out.push("</ul>"); inUl = false; }
+        if (!inOl) { out.push("<ol>"); inOl = true; }
+        out.push(`<li>${ol[1]}</li>`);
+        continue;
+      }
+      if (line === "") { flushPara(); closeLists(); continue; }
+      paraBuf.push(line);
+    }
+    flushPara(); closeLists();
+    return out.join("\n");
+  }
+
+  function renderReportInline(title, notebookId, markdown) {
+    const container = $("reportOutput");
+    const safeTitle = (title || notebookId || "Relatório").replace(/[<>&]/g, "");
+    const filename = (title || notebookId || "relatorio").replace(/[^\w\-]+/g, "_") + ".md";
+    container.innerHTML = `
+      <div class="report-header">
+        <div>
+          <strong>${safeTitle}</strong>
+          <span class="report-id">notebook_id: ${notebookId || "—"}</span>
+        </div>
+        <button id="btnDownloadReport" class="secondary">⬇ Baixar .md</button>
+      </div>
+      <article class="markdown-body">${renderMarkdown(markdown)}</article>
+    `;
+    container.querySelector("#btnDownloadReport").addEventListener("click", () => {
+      const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+  }
+
+  $("btnGenerate").addEventListener("click", async () => {
+    const notebookId = $("grNotebookId").value.trim();
+    if (!notebookId) { alert("Preencha o notebook_id."); return; }
+    const body = { notebook_id: notebookId };
+    if ($("grTitle").value.trim()) body.notebook_title = $("grTitle").value.trim();
+
+    $("btnGenerate").disabled = true;
+    $("genProgress").classList.add("show");
+    $("resGenerate").className = "result";
+    const stopPolling = startStatusPolling(notebookId, $("genProgressBar"), $("genProgressLabel"));
+
+    try {
+      const { ok, status, data } = await doFetch("POST", "/report/generate", body);
+      addLog("POST", "/report/generate", status, ok,
+        ok ? `relatório gerado (${(data.report || "").length} chars)` : ((data && data.detail) || "erro"));
+
+      if (ok && data && data.report) {
+        renderReportInline(data.notebook_title, data.notebook_id, data.report);
+      } else {
+        $("resGenerate").className = "result show err";
+        $("resGenerate").textContent = (data && data.detail) ? data.detail : "Falha ao gerar relatório.";
+      }
+    } catch (e) {
+      $("resGenerate").className = "result show err";
+      $("resGenerate").textContent = "Falha de rede: " + e.message;
+      addLog("POST", "/report/generate", "—", false, "falha de rede: " + e.message);
+    } finally {
+      stopPolling();
+      $("genProgress").classList.remove("show");
+      $("genProgressLabel").style.display = "none";
+      $("btnGenerate").disabled = false;
+    }
+  });
+
+  // ── Slides: geração + visualização de PDF inline, igual ao relatório ───────
+
+  async function renderSlidesInline(notebookId) {
+    const container = $("slidesOutput");
+    container.innerHTML = '<p class="placeholder">Carregando PDF...</p>';
+    try {
+      const url = baseUrlEl.value.replace(/\/+$/, "") + "/report/download-slides/" + encodeURIComponent(notebookId);
+      const resp = await fetch(url, { headers: { "x-api-key": apiKeyEl.value } });
+      if (!resp.ok) {
+        let detail = "erro " + resp.status;
+        try { detail = (await resp.json()).detail || detail; } catch {}
+        container.innerHTML = `<p class="placeholder">Falha ao carregar o PDF: ${detail}</p>`;
+        return;
+      }
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      container.innerHTML = `
+        <div class="report-header">
+          <div>
+            <strong>Slide deck</strong>
+            <span class="report-id">notebook_id: ${notebookId}</span>
+          </div>
+          <button id="btnDownloadSlidesInline" class="secondary">⬇ Baixar PDF</button>
+        </div>
+        <embed src="${blobUrl}" type="application/pdf" class="pdf-embed">
+      `;
+      container.querySelector("#btnDownloadSlidesInline").addEventListener("click", () => {
+        const a = document.createElement("a");
+        a.href = blobUrl; a.download = notebookId + "_slides.pdf";
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      });
+    } catch (e) {
+      container.innerHTML = `<p class="placeholder">Falha de rede ao carregar o PDF: ${e.message}</p>`;
+    }
+  }
+
+  $("btnSlides").addEventListener("click", async () => {
+    const notebookId = $("csNotebookId").value.trim();
+    if (!notebookId) { alert("Preencha o notebook_id."); return; }
+    $("btnSlides").disabled = true;
+    $("resSlides").className = "result";
+    $("slidesOutput").innerHTML = '<p class="placeholder">Gerando slides...</p>';
+    $("slidesProgress").classList.add("show");
+    const stopPolling = startStatusPolling(notebookId, $("slidesProgressBar"), $("slidesProgressLabel"));
+
+    try {
+      const { ok, status, data } = await doFetch("POST", "/report/create-slides", { notebook_id: notebookId });
+      addLog("POST", "/report/create-slides", status, ok, ok ? data.message : ((data && data.detail) || "erro"));
+      if (ok) {
+        await renderSlidesInline(notebookId);
+      } else {
+        $("resSlides").className = "result show err";
+        $("resSlides").textContent = (data && data.detail) ? data.detail : "Falha ao gerar slides.";
+        $("slidesOutput").innerHTML = '<p class="placeholder">O PDF aparece aqui depois de gerado.</p>';
+      }
+    } catch (e) {
+      $("resSlides").className = "result show err";
+      $("resSlides").textContent = "Falha de rede: " + e.message;
+      addLog("POST", "/report/create-slides", "—", false, "falha de rede: " + e.message);
+    } finally {
+      stopPolling();
+      $("slidesProgress").classList.remove("show");
+      $("slidesProgressLabel").style.display = "none";
+      $("btnSlides").disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

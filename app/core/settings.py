@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     BACKUP_SCHEDULE_MINUTE: int = 0
     # Autenticação
     API_KEY: str
+    # "local" habilita CORS permissivo (usado pela interface de teste local).
+    # Qualquer outro valor (padrão) mantém CORS desligado, como em produção.
+    ENV: str = "production"
 
 
 settings = Settings()

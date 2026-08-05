@@ -3,9 +3,10 @@ Serviço de geração de relatórios via NotebookLM.
 
 Expõe os seguintes fluxos públicos:
 
-  1. orchestrate_prepare_notebook() — orquestra toda a preparação: checa cache
-     no banco, valida usuário, busca mensagens, cria o notebook no NotebookLM
-     e persiste o resultado. Deve ser chamado pelo router e pelo job de backup.
+  1. orchestrate_prepare_notebook() — orquestra toda a preparação: valida
+     usuário, busca todo o histórico de mensagens, cria um notebook novo no
+     NotebookLM e persiste o resultado. Sempre cria (sem cache/reaproveitamento
+     de notebook). Deve ser chamado pelo router e pelo job de backup.
 
   2. create_report() — recebe apenas o notebook_id e gera o artefato de
      relatório via artifacts API. Não cria nem altera o notebook.
@@ -58,6 +59,28 @@ _CUSTOM_REPORT_PROMPT = (
 # Separador entre mensagens — facilita leitura pelo NotebookLM
 _MESSAGE_SEPARATOR = "\n\n---\n\n"
 
+# ── Rastreamento de status de geração (para a barra de progresso da UI de teste) ──
+# Em memória, por processo — não persiste entre reinícios e não é usado por
+# nenhuma lógica de negócio. Só alimenta GET /report/generation-status/{id}.
+# Estados possíveis vêm direto do NotebookLM: pending, in_progress, completed,
+# failed, not_found, removed (ver notebooklm._types.artifacts.GenerationState).
+_generation_status: dict[str, dict] = {}
+
+
+def get_generation_status(notebook_id: str) -> Optional[dict]:
+    """Último status de geração observado para esse notebook_id, ou None se
+    nada foi rastreado ainda (nenhuma geração iniciada, ou API reiniciada)."""
+    return _generation_status.get(notebook_id)
+
+
+def _make_status_tracker(notebook_id: str):
+    def _on_change(status) -> None:
+        _generation_status[notebook_id] = {
+            "status": str(status.status),
+            "task_id": status.task_id,
+        }
+    return _on_change
+
 
 # ── Helpers privados ─────────────────────────────────────────────────────────
 
@@ -88,7 +111,7 @@ def _build_notebook_title(user_name: str, end_date: date) -> str:
 
 
 async def _call_notebooklm_prepare(
-    user_name: str, end_date: date, messages: list[str], notebook_id: str  
+    user_name: str, end_date: date, messages: list[str]
 ) -> PrepareNotebookResponse:
     """
     Integração direta com a API do NotebookLM. Não acessa banco de dados.
@@ -111,16 +134,6 @@ async def _call_notebooklm_prepare(
     print(f"Arquivo '{nome_do_arquivo}' foi criado ou substituído.")
 
     async with await NotebookLMClient.from_storage() as client:
-        #if (notebook_id):
-        #    fontes_atuais = await client.sources.list(notebook_id=notebook_id)
-        #    
-        #    if (fontes_atuais):
-        #        for fonte in fontes_atuais:
-        #            print(f"Deletando fonte: {fonte.title} (ID: {fonte.id})")
-        #            # Deleta cada fonte individualmente usando o ID
-        #            await client.sources.delete(notebook_id=notebook_id, source_id=fonte.id)
-        #
-        #else:
         # 1. Cria o notebook
         logger.info("Criando notebook: '%s'", titled)
         nb = await client.notebooks.create(titled)
@@ -159,16 +172,23 @@ async def orchestrate_prepare_notebook(
     force_recreate: bool = False,
 ) -> PrepareNotebookResponse:
     """
-    Orquestra a preparação completa de um notebook para um usuário e data (ou range).
+    Orquestra a preparação completa de um notebook para um usuário: busca o
+    histórico inteiro de mensagens e cria um notebook novo no NotebookLM.
 
     Centraliza a lógica compartilhada entre o endpoint HTTP e o job de backup:
 
-      1. Checa se já existe um notebook em cache no banco (skip se houver).
-      2. Busca o nome do usuário na tabela users.
-      3. Busca as mensagens do dia na tabela conversations.
-      4. Chama _call_notebooklm_prepare() para criar o notebook na API externa.
-      5. Persiste o notebook_id no banco via NotebookRepository.
-      6. Retorna PrepareNotebookResponse.
+      0. Se já existe um notebook preparado hoje para esse usuário (mesma
+         start_date/end_date), reaproveita em vez de criar outro — evita
+         empilhar notebooks duplicados ao reprocessar no mesmo dia (testes
+         manuais, reruns). `force_recreate=True` ignora esse reaproveitamento.
+      1. Busca o nome do usuário na tabela users.
+      2. Busca todo o histórico de mensagens na tabela conversations.
+      3. Chama _call_notebooklm_prepare() para criar o notebook na API externa.
+      4. Persiste o notebook_id no banco via NotebookRepository.
+      5. Retorna PrepareNotebookResponse.
+
+    Um notebook novo de verdade só é criado quando a data muda (ex.: a
+    próxima rodada semanal do job de backup) ou quando force_recreate=True.
 
     Exceções:
         ValueError: se usuário não encontrado ou sem mensagens na data.
@@ -179,32 +199,27 @@ async def orchestrate_prepare_notebook(
     if end_date is None:
         end_date = start_date
 
-    # 1. Checa cache no banco
-    cached = False
+    # 0. Reaproveita notebook já preparado hoje (mesma data), se houver
     if not force_recreate:
-        cached = await nb_repo.get_notebook_by_user(
-            user_id
-        )
+        cached = await nb_repo.get_notebook_by_user_and_date_range(user_id, end_date, end_date)
         if cached:
             logger.info(
-                "Notebook encontrado no cache — notebook_id: %s",
-                cached["notebook_id"],
+                "Notebook já preparado hoje para user_id=%s — reaproveitando notebook_id: %s",
+                user_id, cached["notebook_id"],
             )
-            #return PrepareNotebookResponse(
-            #    notebook_id=cached["notebook_id"],
-            #    notebook_title=cached["notebook_title"],
-            #    from_cache=True,
-            #)
-    else:
-        logger.info("Recriação forçada solicitada (bypassing cache)")
+            return PrepareNotebookResponse(
+                notebook_id=cached["notebook_id"],
+                notebook_title=cached["notebook_title"],
+                from_cache=True,
+            )
 
-    # 2. Busca nome do usuário
+    # 1. Busca nome do usuário
     user_row = await conn.fetchrow("SELECT name FROM users WHERE id = $1", user_id)
     if not user_row:
         raise ValueError(f"Usuário não encontrado: {user_id}")
     user_name = user_row["name"]
 
-    # 3. Busca mensagens do dia ou range
+    # 2. Busca todo o histórico de mensagens
     conv_repo = ConversationMessageRepository(conn)
     rows = await conv_repo.fetch_messages_by_user_and_date_range(
         user_id, end_date
@@ -222,18 +237,18 @@ async def orchestrate_prepare_notebook(
         "%d mensagem(ns) encontrada(s) para user_id=%s.", len(messages), user_id
     )
 
-    notebook_id = cached["notebook_id"] if cached else None
-    # 4. Cria notebook no NotebookLM
-    response = await _call_notebooklm_prepare(user_name, end_date, messages, notebook_id)
+    # 3. Cria notebook no NotebookLM
+    response = await _call_notebooklm_prepare(user_name, end_date, messages)
 
-    # 5. Persiste no banco
-    #await nb_repo.save_notebook_id(
-    #    user_id=user_id,
-    #    notebook_id=response.notebook_id,
-    #    notebook_title=response.notebook_title,
-    #    end_date=end_date,
-    #)
-    #logger.info("Notebook salvo no banco — notebook_id: %s", response.notebook_id)
+    # 4. Persiste no banco
+    await nb_repo.save_notebook_id(
+        user_id=user_id,
+        notebook_id=response.notebook_id,
+        notebook_title=response.notebook_title,
+        start_date=end_date,
+        end_date=end_date,
+    )
+    logger.info("Notebook salvo no banco — notebook_id: %s", response.notebook_id)
 
     return response
 
@@ -267,6 +282,7 @@ async def create_report(conn: asyncpg.Connection, req: ReportRequest) -> ReportR
                 custom_prompt=_CUSTOM_REPORT_PROMPT,
             )
             logger.debug("Geração iniciada — task_id: %s", gen_status.task_id)
+            _generation_status[nb_id] = {"status": str(gen_status.status), "task_id": gen_status.task_id}
 
             # 2. Aguarda conclusão
             logger.info("Aguardando conclusão do relatório (timeout: 300s)...")
@@ -274,7 +290,9 @@ async def create_report(conn: asyncpg.Connection, req: ReportRequest) -> ReportR
                 nb_id,
                 gen_status.task_id,
                 timeout=300.0,
+                on_status_change=_make_status_tracker(nb_id),
             )
+            _generation_status[nb_id] = {"status": str(final_status.status), "task_id": final_status.task_id}
 
             if final_status.is_failed:
                 raise RuntimeError(
@@ -330,9 +348,15 @@ async def create_slides_from_notebook(req: NotebookRequest) -> NotebookDefaultRe
                 slide_length=SlideDeckLength.DEFAULT,
                 instructions=settings.SLIDE_DECK_INSTRUCTION,
             )
-            await client.artifacts.wait_for_completion(
-                nb_id, slide_status.task_id, timeout=1200
+            _generation_status[nb_id] = {"status": str(slide_status.status), "task_id": slide_status.task_id}
+            final_slide_status = await client.artifacts.wait_for_completion(
+                nb_id, slide_status.task_id, timeout=1200,
+                on_status_change=_make_status_tracker(nb_id),
             )
+            _generation_status[nb_id] = {
+                "status": str(final_slide_status.status),
+                "task_id": final_slide_status.task_id,
+            }
 
         # 2. Baixa o slide deck
         output_dir = _ensure_output_dir()

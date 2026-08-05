@@ -58,11 +58,20 @@ class NotebookRepository:
         user_id: UUID,
         notebook_id: str,
         notebook_title: str,
+        start_date: date,
         end_date: date,
     ) -> None:
         """
-        Persiste o notebook_id no banco logo após a criação no NotebookLM,
-        antes de o relatório ser gerado. report_content e report_path ficam NULL.
+        Persiste o notebook_id no banco logo após a criação no NotebookLM.
+        Como cada notebook agora cobre o histórico completo do usuário (sem
+        range), start_date é gravado igual a end_date — a linha representa
+        a "foto" daquela rodada de criação, não um período.
+
+        Upsert por (user_id, start_date, end_date): se o notebook já foi
+        preparado hoje para esse usuário (ex.: reprocessamento manual), a
+        linha existente é atualizada para o novo notebook_id em vez de
+        quebrar com erro de constraint — o notebook novo já foi criado no
+        NotebookLM nesse ponto, então falhar aqui só perderia o registro.
         """
         await self.conn.execute(
             """
@@ -70,12 +79,18 @@ class NotebookRepository:
                 user_id,
                 notebook_id,
                 notebook_title,
+                start_date,
                 end_date
-            ) VALUES ($1, $2, $3, $4)
+            ) VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (user_id, start_date, end_date) DO UPDATE SET
+                notebook_id = EXCLUDED.notebook_id,
+                notebook_title = EXCLUDED.notebook_title,
+                created_at = CURRENT_TIMESTAMP
             """,
             user_id,
             notebook_id,
             notebook_title,
+            start_date,
             end_date,
         )
 
