@@ -64,3 +64,9 @@ dmypy.json
 notebooklm/
 outputs/
 local_environment/
+
+# Token do Railway usado por scripts/refresh_notebooklm_auth.py — segredo local, nunca versionar
+scripts/.railway_token
+
+# Contexto de trabalho local do Claude — não é pra ir pro repositório
+CLAUDE.md
