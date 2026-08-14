@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers.report import router as report_router
 from app.core.database import create_pool, close_pool
+from app.core.notebooklm_auth import bootstrap_master_token
 from app.core.settings import settings
 from app.scheduler.scheduler import create_scheduler
 from fastapi.responses import JSONResponse
@@ -16,6 +17,7 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    bootstrap_master_token()
     await create_pool()
     scheduler = create_scheduler()
     scheduler.start()

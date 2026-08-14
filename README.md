@@ -77,7 +77,9 @@ copy .env.example .env
 | `SLIDE_DECK_INSTRUCTION` | sim | Instrução fixa passada ao gerar o slide deck |
 | `BACKUP_SCHEDULE_HOUR` | não (padrão `23`) | Hora do backup semanal, fuso `America/Sao_Paulo` |
 | `BACKUP_SCHEDULE_MINUTE` | não (padrão `0`) | Minuto do backup semanal |
-| `NOTEBOOKLM_AUTH_JSON` | não (local) / sim (produção) | Conteúdo JSON da sessão do NotebookLM, para rodar sem navegador (ver [Deploy](#deploy-railway)) |
+| `NOTEBOOKLM_AUTH_JSON` | não (local) / sim (produção) | Conteúdo JSON da sessão do NotebookLM (`storage_state.json`), para rodar sem navegador. Expira em poucos dias — precisa relogar manualmente pra renovar (ver [Deploy](#deploy-railway)) |
+| `NOTEBOOKLM_MASTER_TOKEN_JSON` | não | Conteúdo JSON do master token (`master_token.json`). Modo recomendado: a sessão se renova sozinha, sem relogin manual (ver [Deploy](#deploy-railway)) |
+| `NOTEBOOKLM_REFRESH_CMD` | não | Comando que a lib roda sozinha quando detecta sessão expirada — `notebooklm login --master-token-refresh` no modo master-token. **Mutuamente exclusiva com `NOTEBOOKLM_AUTH_JSON`** (ver [Deploy](#deploy-railway)) |
 
 ## Rodando a API
 
@@ -128,15 +130,32 @@ docker run -p 8004:8004 --env-file .env ultracognia-notebook-green
 
 ## Deploy (Railway)
 
-O login interativo do `notebooklm login` não roda num container headless. O fluxo é:
+O login interativo do `notebooklm login` não roda num container headless — a sessão precisa ser gerada localmente e enviada pro Railway. Existem dois modos, com trade-offs diferentes:
+
+### Modo `storage_state.json` (simples, mas expira rápido)
 
 1. **Localmente** (uma vez, numa máquina com navegador): rode `notebooklm login` com a conta Google de produção.
-2. Copie o conteúdo do arquivo gerado (`~/.notebooklm/profiles/default/storage_state.json`).
-3. No Railway, crie a variável de ambiente `NOTEBOOKLM_AUTH_JSON` com esse conteúdo colado como valor (secret).
+2. Copie o conteúdo do arquivo gerado (`~/.notebooklm/profiles/default/storage_state.json`) — ou rode [`scripts/refresh_notebooklm_auth.py`](scripts/refresh_notebooklm_auth.py), que faz o login e o envio pro Railway automaticamente (login manual, upload automático).
+3. No Railway, crie a variável de ambiente `NOTEBOOKLM_AUTH_JSON` com esse conteúdo colado como valor (secret) — o script acima já faz isso.
 
-No boot, `NotebookLMClient.from_storage()` detecta `NOTEBOOKLM_AUTH_JSON` e usa a sessão diretamente, sem precisar de navegador. Configure também as demais variáveis da tabela acima, incluindo `BACKUP_SCHEDULE_HOUR=23` / `BACKUP_SCHEDULE_MINUTE=0` para o backup de sexta-feira.
+No boot, `NotebookLMClient.from_storage()` detecta `NOTEBOOKLM_AUTH_JSON` e usa a sessão diretamente, sem precisar de navegador.
 
-Essa credencial não é eterna — sessões Google podem expirar; se isso acontecer, repita os passos 1–3.
+⚠️ **Essa credencial expira rápido na prática** (observado: poucos dias, não semanas) — quando expirar, o backup semanal e a geração de relatório/slides falham silenciosamente até alguém relogar manualmente (repetir os passos acima).
+
+### Modo master-token (recomendado — auto-renovação, sem relogin manual)
+
+Elimina a dependência de relogin manual recorrente: a sessão se renova sozinha em produção. Trade-off: o master token é uma credencial mais sensível (full-account) e o método é considerado "ToS-grey" pela própria lib (`notebooklm-py`) — recomenda-se **conta Google dedicada**, não pessoal.
+
+⚠️ **`NOTEBOOKLM_AUTH_JSON` e este modo são mutuamente exclusivos** — se `NOTEBOOKLM_AUTH_JSON` estiver setada, a lib sempre usa ela direto e nem chega a olhar pro master token (confirmado no código-fonte da lib, `_auth/tokens.py`). Migrar pra esse modo num ambiente significa **remover** `NOTEBOOKLM_AUTH_JSON` de lá, não adicionar por cima.
+
+1. **Localmente** (uma vez): instale o extra `notebooklm-py[headless]` (já incluso no `requirements.txt`) e rode `notebooklm login --master-token --account <email-dedicado>`.
+2. Isso gera `~/.notebooklm/profiles/default/master_token.json`. Envie o conteúdo pro Railway como `NOTEBOOKLM_MASTER_TOKEN_JSON`.
+3. Configure `NOTEBOOKLM_REFRESH_CMD=notebooklm login --master-token-refresh` no Railway.
+4. **Remova** a variável `NOTEBOOKLM_AUTH_JSON` desse ambiente.
+
+No boot, `app/core/notebooklm_auth.py` (chamado no `lifespan` do `main.py`) materializa `NOTEBOOKLM_MASTER_TOKEN_JSON` como arquivo em disco (`~/.notebooklm/profiles/default/master_token.json`) — necessário porque, diferente do `storage_state.json`, a lib só aceita o master token como arquivo físico, não direto de env var. Nenhuma mudança é necessária nas chamadas a `NotebookLMClient.from_storage()` — a auto-renovação é inteiramente orientada por variável de ambiente: quando a sessão expira, a lib detecta o erro e roda `NOTEBOOKLM_REFRESH_CMD` sozinha, que re-minta os cookies a partir do master token, sem navegador e sem intervenção manual.
+
+Configure também as demais variáveis da tabela acima, incluindo `BACKUP_SCHEDULE_HOUR=23` / `BACKUP_SCHEDULE_MINUTE=0` para o backup de sexta-feira.
 
 ## Interface de teste local
 
