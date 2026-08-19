@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>{{ deck.slides[0].title if deck.slides else "Deck" }}</title>
+<style>
+  :root {
+    --color-primary: {{ deck.theme.palette.primary }};
+    --color-background: {{ deck.theme.palette.background }};
+    --color-text: {{ deck.theme.palette.text }};
+    --color-accent: {{ deck.theme.palette.get('accent', deck.theme.palette.primary) }};
+    --font-stack: {{ deck.theme.font_stack }};
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-stack); background: #d9dde2; }
+
+  .slide {
+    width: 1280px;
+    height: 720px;
+    background: var(--color-background);
+    color: var(--color-text);
+    position: relative;
+    overflow: hidden;
+    margin: 0 auto 24px auto;
+    page-break-after: always;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .slide__logo {
+    position: absolute;
+    top: 32px;
+    right: 40px;
+    max-height: 48px;
+    max-width: 200px;
+    object-fit: contain;
+  }
+
+  .slide__title { font-size: 40px; font-weight: 700; line-height: 1.15; }
+  .slide__body { font-size: 22px; line-height: 1.5; margin-top: 20px; }
+
+  .bullets { list-style: none; }
+  .bullets li {
+    position: relative;
+    padding-left: 28px;
+    margin-bottom: 12px;
+  }
+  .bullets li::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 10px;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--color-accent);
+  }
+
+  blockquote {
+    border-left: 4px solid var(--color-accent);
+    padding-left: 20px;
+    font-style: italic;
+    font-size: 26px;
+  }
+  blockquote cite { display: block; margin-top: 10px; font-size: 16px; font-style: normal; opacity: 0.7; }
+
+  .asset-placeholder {
+    flex: 1;
+    background: repeating-linear-gradient(45deg, #eee, #eee 10px, #f7f7f7 10px, #f7f7f7 20px);
+    border: 2px dashed #aaa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #888;
+    font-size: 14px;
+    margin-top: 16px;
+  }
+
+  .asset-image {
+    flex: 1;
+    max-width: 100%;
+    min-height: 0;
+    object-fit: contain;
+    margin-top: 16px;
+  }
+
+  /* ── cover / section-break / closing: tela cheia com cor de destaque ── */
+  .slide--cover, .slide--section-break, .slide--closing {
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    background: var(--color-primary);
+    color: var(--color-background);
+  }
+  .slide--cover .slide__title, .slide--closing .slide__title { font-size: 56px; }
+  .slide--section-break .slide__title { font-size: 48px; text-transform: uppercase; letter-spacing: 2px; }
+
+  /* ── title-bullets / diagram-full: padding padrão de conteúdo ── */
+  .slide--title-bullets, .slide--diagram-full, .slide--two-column {
+    padding: 56px 64px;
+  }
+
+  /* ── two-column ── */
+  .two-column__wrap { display: flex; gap: 40px; margin-top: 24px; flex: 1; }
+  .two-column__col { flex: 1; }
+
+  .slide__notes { display: none; } /* notas do apresentador não aparecem no HTML visual */
+
+  @media print {
+    body { background: none; }
+    .slide { margin: 0; } /* na impressão, page-break-after já separa os slides */
+  }
+</style>
+</head>
+<body>
+
+{% for slide in deck.slides %}
+<section class="slide slide--{{ slide.layout.value }}" id="{{ slide.id }}">
+  {% if deck.theme.logo_url %}<img class="slide__logo" src="{{ deck.theme.logo_url }}" alt="logo">{% endif %}
+
+  {% if slide.layout.value == "two-column" %}
+    <h1 class="slide__title">{{ slide.title }}</h1>
+    {% set half = (slide.body|length + 1) // 2 %}
+    <div class="two-column__wrap">
+      <div class="two-column__col">{% for block in slide.body[:half] %}{{ render_block(block) }}{% endfor %}</div>
+      <div class="two-column__col">{% for block in slide.body[half:] %}{{ render_block(block) }}{% endfor %}</div>
+    </div>
+
+  {% elif slide.layout.value == "diagram-full" %}
+    <h1 class="slide__title">{{ slide.title }}</h1>
+    <div class="slide__body">{% for block in slide.body %}{{ render_block(block) }}{% endfor %}</div>
+    {% if slide.asset %}
+      {% if slide.asset.ref.startswith("http") %}
+        <img class="asset-image" src="{{ slide.asset.ref }}" alt="{{ slide.title }}">
+      {% else %}
+        <div class="asset-placeholder">[{{ slide.asset.kind }}: {{ slide.asset.ref }}]</div>
+      {% endif %}
+    {% endif %}
+
+  {% else %}
+    <h1 class="slide__title">{{ slide.title }}</h1>
+    <div class="slide__body">
+      {% for block in slide.body %}{{ render_block(block) }}{% endfor %}
+    </div>
+  {% endif %}
+
+  {% if slide.notes %}<p class="slide__notes">{{ slide.notes }}</p>{% endif %}
+</section>
+{% endfor %}
+
+</body>
+</html>

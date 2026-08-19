@@ -19,10 +19,12 @@ httptools==0.7.1
 httpx==0.28.1
 idna==3.13
 Jinja2==3.1.6
+lxml==6.1.2
 markdown-it-py==4.1.0
 MarkupSafe==3.0.3
 mdurl==0.1.2
 notebooklm-py[headless]==0.8.0
+Pillow==12.3.0
 playwright==1.59.0
 pydantic==2.13.4
 pydantic-settings==2.14.1
@@ -31,6 +33,7 @@ pyee==13.0.1
 Pygments==2.20.0
 python-dotenv==1.2.2
 python-multipart==0.0.27
+python-pptx==1.0.2
 PyYAML==6.0.3
 rich==15.0.0
 rich-toolkit==0.19.7
@@ -45,3 +48,4 @@ urllib3==2.6.3
 uvicorn==0.30.6
 watchfiles==1.1.1
 websockets==16.0
+XlsxWriter==3.2.9

@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers.report import router as report_router
+from app.decks.router import router as decks_router
+from app.decks.poller import register_deck_poller
 from app.core.database import create_pool, close_pool
 from app.core.notebooklm_auth import bootstrap_master_token
 from app.core.settings import settings
@@ -20,6 +22,7 @@ async def lifespan(app: FastAPI):
     bootstrap_master_token()
     await create_pool()
     scheduler = create_scheduler()
+    register_deck_poller(scheduler)
     scheduler.start()
     yield
     scheduler.shutdown()
@@ -63,6 +66,7 @@ if settings.ENV == "local":
     )
 
 app.include_router(report_router)
+app.include_router(decks_router)
 
 @app.get("/health")
 def health():
