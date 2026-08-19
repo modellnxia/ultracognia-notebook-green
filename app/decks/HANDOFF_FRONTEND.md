@@ -129,7 +129,7 @@ async def baixar_deck(job_id: str, format: str = "pdf", user=Depends(get_current
 
 ## 6. Layouts possíveis (pra referência visual, se a UI quiser mostrar preview)
 
-O `structure` (LLM) escolhe entre 6 layouts fechados por slide — não dá pra vir nenhum outro valor: `cover`, `section-break`, `title-bullets`, `two-column`, `diagram-full`, `closing`. Isso não aparece na resposta da API hoje (o `DeckSpec` inteiro fica só internamente, entre as etapas) — se a UI quiser mostrar um preview slide-a-slide antes do PDF pronto, isso é uma extensão nova a pedir, não existe endpoint pra isso ainda.
+O `structure` (LLM) escolhe entre 7 layouts fechados por slide — não dá pra vir nenhum outro valor: `cover`, `section-break`, `title-bullets`, `two-column`, `diagram-full`, `closing`, `infographic` (novo em 2026-08-19 — eyebrow + título + subtítulo + ilustração + 2-4 painéis estruturados + citação de rodapé; é o layout padrão pra conteúdo analítico/estratégico agora). Isso não aparece na resposta da API hoje (o `DeckSpec` inteiro fica só internamente, entre as etapas) — se a UI quiser mostrar um preview slide-a-slide antes do PDF pronto, isso é uma extensão nova a pedir, não existe endpoint pra isso ainda.
 
 ## 7. QA visual — o que vem no `output_ref` da etapa `qa`
 

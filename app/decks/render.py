@@ -40,6 +40,16 @@ def _render_block(block: Block) -> Markup:
         cite = f"<cite>— {escape(block.attribution)}</cite>" if block.attribution else ""
         return Markup(f"<blockquote>{escape(block.text)}{cite}</blockquote>")
 
+    if block.type == "panels":
+        cards = "".join(
+            f"<div class='panel-card'>"
+            f"<div class='panel-card__heading'>{escape(p.heading)}</div>"
+            f"<div class='panel-card__text'>{escape(p.text)}</div>"
+            f"</div>"
+            for p in block.panels
+        )
+        return Markup(f"<div class='panels-grid'>{cards}</div>")
+
     raise ValueError(f"Tipo de bloco desconhecido: {block.type!r}")
 
 

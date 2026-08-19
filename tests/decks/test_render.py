@@ -7,6 +7,8 @@ from app.decks.models import (
     DeckSpec,
     HeadingBlock,
     LayoutId,
+    Panel,
+    PanelListBlock,
     ParagraphBlock,
     QuoteBlock,
     Slide,
@@ -51,7 +53,7 @@ class TestThemeInjection:
         assert '<img class="slide__logo"' not in html
 
 
-class TestAllSixLayoutsRender:
+class TestAllLayoutsRender:
     @pytest.mark.parametrize("layout", list(LayoutId))
     def test_each_layout_produces_its_own_css_class(self, layout):
         deck = DeckSpec(
@@ -181,6 +183,65 @@ class TestAssetPlaceholder:
         # o que importa é que o elemento em si não apareça no <body>.
         assert 'class="asset-placeholder"' not in html
         assert '<img class="asset-image" src="https://proj.supabase.co/storage/v1/object/sign/decks/x/y.png?token=abc"' in html
+
+
+class TestInfographicLayout:
+    """Layout adicionado em 2026-08-19 — eyebrow + subtítulo + ilustração + painéis + citação."""
+
+    def _infographic_deck(self, **slide_kwargs) -> DeckSpec:
+        defaults = dict(
+            layout=LayoutId.INFOGRAPHIC,
+            title="Migrar para System-Centric",
+            eyebrow="Categoria | Subcategoria",
+            citation="Teoria X — Fonte Y",
+            body=[
+                ParagraphBlock(text="Subtítulo de contexto."),
+                PanelListBlock(
+                    panels=[
+                        Panel(heading="Painel 1", text="Texto do painel 1"),
+                        Panel(heading="Painel 2", text="Texto do painel 2"),
+                    ]
+                ),
+            ],
+        )
+        defaults.update(slide_kwargs)
+        return DeckSpec(theme=_theme(), slides=[Slide(**defaults)])
+
+    def test_eyebrow_renders_when_present(self):
+        html = render_deck_html(self._infographic_deck())
+        assert '<div class="slide__eyebrow">Categoria | Subcategoria</div>' in html
+
+    def test_no_eyebrow_element_when_absent(self):
+        # A regra CSS ".slide__eyebrow { ... }" sempre está no <style> —
+        # o que importa é o elemento em si não aparecer no <body>.
+        html = render_deck_html(self._infographic_deck(eyebrow=None))
+        assert '<div class="slide__eyebrow">' not in html
+
+    def test_citation_renders_when_present(self):
+        html = render_deck_html(self._infographic_deck())
+        assert '<div class="slide__citation">Teoria X — Fonte Y</div>' in html
+
+    def test_no_citation_element_when_absent(self):
+        html = render_deck_html(self._infographic_deck(citation=None))
+        assert '<div class="slide__citation">' not in html
+
+    def test_panels_render_as_panel_cards(self):
+        html = render_deck_html(self._infographic_deck())
+        # render_block gera as tags com aspas simples (mesmo estilo já usado
+        # por bullets/blockquote nesse módulo — ver render.py).
+        assert html.count("class='panel-card'") == 2
+        assert "Painel 1" in html
+        assert "Texto do painel 1" in html
+
+    def test_subtitle_comes_before_asset_which_comes_before_panels(self):
+        deck = self._infographic_deck(
+            asset=SlideAsset(kind="image", ref="https://x.supabase.co/sign/foo.png"),
+        )
+        html = render_deck_html(deck)
+        subtitle_pos = html.index("Subtítulo de contexto")
+        asset_pos = html.index('<img class="asset-image"')
+        panels_pos = html.index("class='panels-grid'")
+        assert subtitle_pos < asset_pos < panels_pos
 
 
 class TestMultipleSlides:

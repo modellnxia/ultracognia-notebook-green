@@ -204,6 +204,47 @@ não seu módulo), e variáveis de ambiente próprias (prefixo `DECK_*` /
     `GET /decks/{id}/download` (os dois formatos) → PPTX reaberto com o
     próprio `python-pptx` pra confirmar validade (4 slides, íntegro).
   - 106 testes automatizados no total do módulo.
+- ✅ **Layout `infographic` + few-shot visual real (2026-08-19)** — usuário
+  comparou nosso resultado com decks reais gerados pelo NotebookLM (3
+  referências, "shot1/2/3") e considerou o nosso "inaceitável": sem imagem
+  (achado à parte, ver abaixo) e com layouts simples demais. Resposta em
+  duas partes:
+  1. **7º layout, `infographic`** — eyebrow (categoria) + título + subtítulo
+     + ilustração hero + 2-4 painéis estruturados (`PanelListBlock`/`Panel`,
+     campo novo no contrato) + citação de rodapé (framework/fonte). Vira o
+     layout PADRÃO pra conteúdo analítico/estratégico no prompt do
+     `structure`, não uma exceção.
+  2. **Few-shot visual de verdade** — fechou o `TODO` que já existia no
+     código desde a fatia 5 ("substituir esse guia textual pelas imagens de
+     referência few-shot"). Duas das imagens reais do usuário (comprimidas,
+     vendorizadas em `static/fewshot/`) são anexadas de verdade na chamada
+     ao Gemini (multimodal — `llm/client.py` ganhou suporte a
+     `reference_images`, antes só mandava texto).
+  - Ilustração deixou de ser opt-in: o prompt agora trata imagem/diagrama
+    como padrão de todo slide `infographic`/`diagram-full`, não condicional
+    a o editorial mencionar explicitamente.
+  - **Achado operacional, não de design**: `DECK_IMAGE_PROVIDER` nunca tinha
+    sido configurado em produção (só existia no ambiente de teste local) —
+    com `GEMINI_API_KEY` ainda no tier gratuito (cota 0 pro modelo de
+    imagem), toda geração de imagem em produção estava caindo no
+    placeholder silenciosamente. Corrigido (`pollinations` configurado
+    também no `notebook_dev`).
+  - Os dois renderizadores (`render.py`/HTML e `pptx_render.py`) ganharam o
+    layout novo de forma equivalente — painéis viram cards com barra de
+    destaque nos dois, não só visual, o PPTX continua 100% editável.
+  - **Validado ponta a ponta com dado real, com o few-shot anexado de
+    verdade**: o Gemini escolheu sozinho `infographic` pra 3 dos 5 slides
+    (reservando cover/closing pros extremos), preencheu eyebrow/painéis/
+    citação plausível referenciando frameworks reais (MIT Sloan, Goldratt),
+    e gerou imagem real (via Pollinations) pra todo slide com asset — zero
+    placeholder. QA: `issue_count: 0`.
+  - 139 testes automatizados no total do módulo.
+  - **Gaps conhecidos, não resolvidos ainda**: a relevância temática da
+    imagem depende da qualidade do provider (Pollinations é mais solto que
+    o Gemini seria com billing habilitado — ainda pendente); a paleta de
+    cor é decisão livre do LLM a cada geração, às vezes sai menos refinada
+    (ex.: um ciano vibrante numa capa, na validação real) — não há curadoria
+    de paleta ainda.
 
 ## Integração com o frontend (`ultracognia-frontend-green`)
 

@@ -7,8 +7,15 @@ erro se todos falharem (ou nenhum tiver chave).
 Dois formatos de chamada, não três: Gemini tem formato próprio
 (`generateContent`); DeepSeek e OpenRouter são OpenAI-compatible
 (`/chat/completions`) — o mesmo adaptador serve os dois.
+
+Suporte a imagem de referência (few-shot visual, 2026-08-19 — ver
+structure.py): só implementado pro Gemini, que é o único provider ativo
+hoje. Se o fallback cair pro DeepSeek/OpenRouter com imagens pedidas, elas
+são simplesmente ignoradas (loga aviso) — não vale a pena implementar um
+formato multimodal pra um provider sem chave configurada ainda.
 """
 
+import base64
 import logging
 import os
 
@@ -42,12 +49,26 @@ class LLMError(RuntimeError):
     """Nenhum provider ativo (com chave configurada) conseguiu responder."""
 
 
-async def _call_gemini(url: str, api_key: str, prompt: str) -> tuple[str, int, int]:
+async def _call_gemini(
+    url: str,
+    api_key: str,
+    prompt: str,
+    reference_images: list[tuple[bytes, str]] | None = None,
+) -> tuple[str, int, int]:
+    # Imagens vêm ANTES do texto nas `parts` — é a ordem que a documentação do
+    # Gemini recomenda pra multimodal (a imagem já dá contexto antes do
+    # modelo ler a instrução).
+    parts = [
+        {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(image_bytes).decode()}}
+        for image_bytes, mime_type in (reference_images or [])
+    ]
+    parts.append({"text": prompt})
+
     async with httpx.AsyncClient(timeout=90) as client:
         resp = await client.post(
             url,
             params={"key": api_key},
-            json={"contents": [{"parts": [{"text": prompt}]}]},
+            json={"contents": [{"parts": parts}]},
         )
         resp.raise_for_status()
         data = resp.json()
@@ -72,11 +93,20 @@ async def _call_openai_compatible(
         return text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
 
 
-async def generate_text(prompt: str, conn: asyncpg.Connection) -> tuple[str, int, int]:
+async def generate_text(
+    prompt: str,
+    conn: asyncpg.Connection,
+    *,
+    reference_images: list[tuple[bytes, str]] | None = None,
+) -> tuple[str, int, int]:
     """
     Gera texto tentando cada provider ativo em ordem de prioridade.
     Retorna (texto, tokens_entrada, tokens_saida). Levanta LLMError só se
     todos os providers com chave configurada falharem.
+
+    `reference_images`: lista de (bytes, mime_type) — exemplos visuais
+    anexados à chamada (few-shot), só têm efeito no Gemini (ver docstring do
+    módulo).
     """
     providers = await list_active_providers(conn)
     last_error: Exception | None = None
@@ -95,7 +125,12 @@ async def generate_text(prompt: str, conn: asyncpg.Connection) -> tuple[str, int
         tried_any = True
         try:
             if name == "gemini":
-                return await _call_gemini(provider["url"], api_key, prompt)
+                return await _call_gemini(provider["url"], api_key, prompt, reference_images)
+            if reference_images:
+                logger.warning(
+                    "Provider '%s' não suporta imagem de referência ainda — "
+                    "chamando só com texto.", name,
+                )
             model = _OPENAI_COMPAT_DEFAULT_MODEL.get(name, "auto")
             return await _call_openai_compatible(provider["url"], api_key, model, prompt)
         except Exception as exc:

@@ -21,6 +21,8 @@ from app.decks.models import (
     DeckSpec,
     HeadingBlock,
     LayoutId,
+    Panel,
+    PanelListBlock,
     ParagraphBlock,
     QuoteBlock,
     Slide,
@@ -165,3 +167,74 @@ class TestRenderDeckPptx:
         slide = list(prs.slides)[0]
         pictures = [sh for sh in slide.shapes if sh.shape_type == 13]
         assert len(pictures) == 0  # não quebrou o job, só ficou sem imagem
+
+
+class TestInfographicLayout:
+    """Layout adicionado em 2026-08-19 — eyebrow + subtítulo + ilustração + painéis + citação."""
+
+    def _infographic_deck(self, **slide_kwargs) -> DeckSpec:
+        defaults = dict(
+            layout=LayoutId.INFOGRAPHIC,
+            title="Migrar para System-Centric",
+            eyebrow="Categoria | Subcategoria",
+            citation="Teoria X — Fonte Y",
+            body=[
+                ParagraphBlock(text="Subtítulo de contexto."),
+                PanelListBlock(
+                    panels=[
+                        Panel(heading="Painel 1", text="Texto do painel 1"),
+                        Panel(heading="Painel 2", text="Texto do painel 2"),
+                        Panel(heading="Painel 3", text="Texto do painel 3"),
+                    ]
+                ),
+            ],
+        )
+        defaults.update(slide_kwargs)
+        return DeckSpec(theme=_theme(), slides=[Slide(**defaults)])
+
+    @pytest.mark.asyncio
+    async def test_produces_valid_pptx_with_all_text_present(self):
+        pptx_bytes = await render_deck_pptx(self._infographic_deck())
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+        all_text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+
+        assert "CATEGORIA | SUBCATEGORIA" in all_text  # eyebrow vai em maiúsculas
+        assert "Migrar para System-Centric" in all_text
+        assert "Subtítulo de contexto." in all_text
+        assert "Painel 1" in all_text and "Texto do painel 1" in all_text
+        assert "Painel 3" in all_text and "Texto do painel 3" in all_text
+        assert "Teoria X — Fonte Y" in all_text
+
+    @pytest.mark.asyncio
+    async def test_three_panels_produce_three_accent_bars_and_three_textboxes(self):
+        pptx_bytes = await render_deck_pptx(self._infographic_deck())
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+
+        # AUTO_SHAPE (tipo 1) são as barrinhas de destaque de cada painel
+        bars = [sh for sh in slide.shapes if sh.shape_type == 1]
+        assert len(bars) == 3
+
+    @pytest.mark.asyncio
+    async def test_embeds_resolved_image_as_real_picture(self):
+        deck = self._infographic_deck(
+            asset=SlideAsset(kind="image", ref="https://x.supabase.co/sign/foo.png?token=abc"),
+        )
+        with patch("app.decks.pptx_render._fetch_image_bytes", new=AsyncMock(return_value=_TINY_PNG)):
+            pptx_bytes = await render_deck_pptx(deck)
+
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+        pictures = [sh for sh in slide.shapes if sh.shape_type == 13]
+        assert len(pictures) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_eyebrow_or_citation_shapes_when_absent(self):
+        deck = self._infographic_deck(eyebrow=None, citation=None)
+        pptx_bytes = await render_deck_pptx(deck)
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+        all_text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+        assert "CATEGORIA" not in all_text
+        assert "Teoria X" not in all_text

@@ -9,7 +9,10 @@ quando a marca mudar, sem reexecutar IA e sem pagar token de novo.
 `LayoutId` é fechado de propósito — o agente `structure` escolhe entre os
 layouts existentes, nunca inventa um novo, nunca define cor ou fonte fora do
 `Theme`. Começa com 6; cresce depois que o pipeline estiver provado
-end-to-end (ver README.md desta pasta).
+end-to-end (ver README.md desta pasta). `infographic` (2026-08-19) é o 7º —
+ver decisão de mirar no padrão visual denso (eyebrow + ilustração hero +
+painéis estruturados + citação), a partir de referências reais fornecidas
+pelo usuário (few-shot, ver structure.py).
 """
 
 from enum import Enum
@@ -26,6 +29,7 @@ class LayoutId(str, Enum):
     TWO_COLUMN = "two-column"
     DIAGRAM_FULL = "diagram-full"
     CLOSING = "closing"
+    INFOGRAPHIC = "infographic"
 
 
 class Theme(BaseModel):
@@ -85,7 +89,26 @@ class QuoteBlock(BaseModel):
     attribution: Optional[str] = None
 
 
-Block = Union[HeadingBlock, ParagraphBlock, BulletListBlock, QuoteBlock]
+class Panel(BaseModel):
+    """Um mini-card dentro de um PanelListBlock — título curto + descrição curta, nunca texto livre longo."""
+
+    heading: str
+    text: str
+
+
+class PanelListBlock(BaseModel):
+    """
+    Layout `infographic` (2026-08-19): 2 a 4 mini-cards lado a lado, cada um
+    com um título curto e uma descrição — o padrão visual dos exemplos
+    few-shot (ver structure.py). Diferente de `BulletListBlock`: cada item
+    aqui tem título PRÓPRIO, não é uma lista simples de frases.
+    """
+
+    type: Literal["panels"] = "panels"
+    panels: list[Panel] = Field(min_length=2, max_length=4)
+
+
+Block = Union[HeadingBlock, ParagraphBlock, BulletListBlock, QuoteBlock, PanelListBlock]
 
 
 class SlideAsset(BaseModel):
@@ -103,6 +126,14 @@ class Slide(BaseModel):
     body: list[Block] = Field(default_factory=list)
     asset: Optional[SlideAsset] = None
     notes: Optional[str] = None
+    # Os dois abaixo só têm efeito visual no layout `infographic` (2026-08-19)
+    # — em outros layouts o render simplesmente ignora, se vierem preenchidos.
+    eyebrow: Optional[str] = Field(
+        default=None, description='Etiqueta de categoria curta, ex.: "Gestão de Capital Humano | Retenção"'
+    )
+    citation: Optional[str] = Field(
+        default=None, description='Rodapé citando um framework/fonte, ex.: "Teoria dos Jogos — MIT Sloan"'
+    )
 
 
 class DeckSpec(BaseModel):

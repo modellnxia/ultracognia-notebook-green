@@ -6,6 +6,8 @@ from app.decks.models import (
     DeckSpec,
     HeadingBlock,
     LayoutId,
+    Panel,
+    PanelListBlock,
     Slide,
     Theme,
 )
@@ -38,9 +40,15 @@ class TestLayoutIsClosed:
         with pytest.raises(ValidationError):
             Slide(layout="layout-inventado", title="X")
 
-    def test_accepts_all_six_documented_layouts(self):
+    def test_accepts_all_documented_layouts(self):
         for layout in LayoutId:
             Slide(layout=layout, title="X")  # não deve levantar
+
+    def test_infographic_is_a_documented_layout(self):
+        # adicionado em 2026-08-19 — trava explícita pra não "sumir" numa
+        # futura reorganização do enum sem ninguém notar.
+        assert LayoutId.INFOGRAPHIC in LayoutId
+        assert LayoutId.INFOGRAPHIC.value == "infographic"
 
 
 class TestBulletListBlock:
@@ -63,6 +71,35 @@ class TestThemePalette:
         del palette[missing]
         with pytest.raises(ValidationError):
             Theme(palette=palette, font_stack="Inter")
+
+
+class TestPanelListBlock:
+    def test_rejects_fewer_than_two_panels(self):
+        with pytest.raises(ValidationError):
+            PanelListBlock(panels=[Panel(heading="Só um", text="x")])
+
+    def test_rejects_more_than_four_panels(self):
+        with pytest.raises(ValidationError):
+            PanelListBlock(panels=[Panel(heading=f"H{i}", text="x") for i in range(5)])
+
+    def test_accepts_two_to_four_panels(self):
+        for n in (2, 3, 4):
+            PanelListBlock(panels=[Panel(heading=f"H{i}", text="x") for i in range(n)])  # não deve levantar
+
+
+class TestSlideEyebrowAndCitation:
+    def test_default_to_none(self):
+        slide = Slide(layout=LayoutId.INFOGRAPHIC, title="X")
+        assert slide.eyebrow is None
+        assert slide.citation is None
+
+    def test_accepts_eyebrow_and_citation(self):
+        slide = Slide(
+            layout=LayoutId.INFOGRAPHIC, title="X",
+            eyebrow="Categoria | Subcategoria", citation="Fonte — Autor",
+        )
+        assert slide.eyebrow == "Categoria | Subcategoria"
+        assert slide.citation == "Fonte — Autor"
 
 
 class TestSlideIdUniqueness:

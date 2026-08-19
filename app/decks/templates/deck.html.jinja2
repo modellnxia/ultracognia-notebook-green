@@ -102,6 +102,52 @@
   .two-column__wrap { display: flex; gap: 40px; margin-top: 24px; flex: 1; }
   .two-column__col { flex: 1; }
 
+  /* ── infographic (2026-08-19): eyebrow + título + subtítulo + ilustração
+     hero + painéis + citação — o padrão denso dos exemplos de referência
+     do usuário (few-shot, ver structure.py) ── */
+  .slide--infographic {
+    padding: 36px 56px 26px;
+  }
+  .slide__eyebrow {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--color-accent);
+    border: 1px solid var(--color-accent);
+    border-radius: 3px;
+    padding: 4px 10px;
+    margin-bottom: 10px;
+  }
+  .slide--infographic .slide__title { font-size: 28px; margin-bottom: 4px; }
+  .slide__subtitle { font-size: 15px; line-height: 1.4; opacity: 0.85; max-width: 900px; }
+  .slide__subtitle p { margin: 0; }
+  .slide--infographic .asset-image,
+  .slide--infographic .asset-placeholder {
+    margin: 12px 0;
+  }
+
+  .panels-grid { display: flex; gap: 14px; }
+  .panel-card {
+    flex: 1;
+    background: color-mix(in srgb, var(--color-text) 5%, transparent);
+    border-left: 3px solid var(--color-accent);
+    border-radius: 4px;
+    padding: 10px 14px;
+  }
+  .panel-card__heading { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; }
+  .panel-card__text { font-size: 12px; line-height: 1.4; opacity: 0.85; }
+
+  .slide__citation {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--color-text) 20%, transparent);
+    font-style: italic;
+    font-size: 11px;
+    opacity: 0.7;
+  }
+
   .slide__notes { display: none; } /* notas do apresentador não aparecem no HTML visual */
 
   @media print {
@@ -123,6 +169,22 @@
       <div class="two-column__col">{% for block in slide.body[:half] %}{{ render_block(block) }}{% endfor %}</div>
       <div class="two-column__col">{% for block in slide.body[half:] %}{{ render_block(block) }}{% endfor %}</div>
     </div>
+
+  {% elif slide.layout.value == "infographic" %}
+    {% if slide.eyebrow %}<div class="slide__eyebrow">{{ slide.eyebrow }}</div>{% endif %}
+    <h1 class="slide__title">{{ slide.title }}</h1>
+    <div class="slide__subtitle">
+      {% for block in slide.body if block.type != "panels" %}{{ render_block(block) }}{% endfor %}
+    </div>
+    {% if slide.asset %}
+      {% if slide.asset.ref.startswith("http") %}
+        <img class="asset-image" src="{{ slide.asset.ref }}" alt="{{ slide.title }}">
+      {% else %}
+        <div class="asset-placeholder">[{{ slide.asset.kind }}: {{ slide.asset.ref }}]</div>
+      {% endif %}
+    {% endif %}
+    {% for block in slide.body if block.type == "panels" %}{{ render_block(block) }}{% endfor %}
+    {% if slide.citation %}<div class="slide__citation">{{ slide.citation }}</div>{% endif %}
 
   {% elif slide.layout.value == "diagram-full" %}
     <h1 class="slide__title">{{ slide.title }}</h1>

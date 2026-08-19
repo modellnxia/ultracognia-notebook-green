@@ -22,11 +22,12 @@ import logging
 import httpx
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
-from app.decks.models import Block, DeckSpec, LayoutId, Slide
+from app.decks.models import Block, DeckSpec, LayoutId, Panel, Slide
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,19 @@ _SLIDE_HEIGHT = Inches(7.5)
 
 _MARGIN = Inches(0.55)
 _FULLSCREEN_LAYOUTS = {LayoutId.COVER, LayoutId.SECTION_BREAK, LayoutId.CLOSING}
+
+# ── Coordenadas do layout `infographic` (2026-08-19) — eyebrow + título +
+# subtítulo + ilustração hero + painéis + citação, mesmo espírito do CSS
+# em templates/deck.html.jinja2, adaptado pra coordenadas fixas em polegadas
+# (python-pptx não tem flexbox).
+_INFO_EYEBROW_TOP = Inches(0.35)
+_INFO_TITLE_TOP = Inches(0.68)
+_INFO_SUBTITLE_TOP = Inches(1.28)
+_INFO_ASSET_TOP = Inches(1.85)
+_INFO_ASSET_HEIGHT = Inches(3.05)
+_INFO_PANELS_TOP = Inches(5.05)
+_INFO_PANELS_HEIGHT = Inches(1.5)
+_INFO_CITATION_TOP = Inches(6.7)
 
 
 def _rgb(hex_color: str) -> RGBColor:
@@ -135,6 +149,108 @@ def _add_title(slide, text: str, *, color_hex: str, size: int, bold: bool = True
     run.font.color.rgb = _rgb(color_hex)
 
 
+def _add_eyebrow(slide, text: str, *, color_hex: str) -> None:
+    tf = _add_textbox(slide, _MARGIN, _INFO_EYEBROW_TOP, _SLIDE_WIDTH - 2 * _MARGIN, Inches(0.3))
+    run = tf.paragraphs[0].add_run()
+    run.text = text.upper()
+    run.font.size = Pt(11)
+    run.font.bold = True
+    run.font.color.rgb = _rgb(color_hex)
+
+
+def _add_citation(slide, text: str, *, color_hex: str) -> None:
+    tf = _add_textbox(slide, _MARGIN, _INFO_CITATION_TOP, _SLIDE_WIDTH - 2 * _MARGIN, Inches(0.35))
+    run = tf.paragraphs[0].add_run()
+    run.text = text
+    run.font.size = Pt(9.5)
+    run.font.italic = True
+    run.font.color.rgb = _rgb(color_hex)
+
+
+def _add_panels(slide, panels: list[Panel], *, color_hex: str, accent_hex: str) -> None:
+    """
+    Cada painel vira uma barrinha de destaque (mesmo espírito do
+    `border-left: accent` do HTML) + uma caixa de texto com título curto em
+    negrito + descrição — sem fundo de card (python-pptx não tem
+    transparência de preenchimento numa API de alto nível, e um fundo sólido
+    arbitrário sem paleta de "superfície" no `Theme` arriscava destoar do
+    tema). Prioriza ficar editável e correto sobre replicar 100% do visual.
+    """
+    n = len(panels)
+    gap = Inches(0.18)
+    total_width = _SLIDE_WIDTH - 2 * _MARGIN
+    card_width = (total_width - gap * (n - 1)) / n
+
+    for i, panel in enumerate(panels):
+        left = _MARGIN + i * (card_width + gap)
+
+        bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, _INFO_PANELS_TOP, Inches(0.035), _INFO_PANELS_HEIGHT)
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = _rgb(accent_hex)
+        bar.line.fill.background()
+        bar.shadow.inherit = False
+
+        tf = _add_textbox(
+            slide, left + Inches(0.12), _INFO_PANELS_TOP,
+            card_width - Inches(0.12), _INFO_PANELS_HEIGHT,
+        )
+        heading_run = tf.paragraphs[0].add_run()
+        heading_run.text = panel.heading
+        heading_run.font.size = Pt(12)
+        heading_run.font.bold = True
+        heading_run.font.color.rgb = _rgb(accent_hex)
+
+        text_p = tf.add_paragraph()
+        text_run = text_p.add_run()
+        text_run.text = panel.text
+        text_run.font.size = Pt(10.5)
+        text_run.font.color.rgb = _rgb(color_hex)
+
+
+async def _render_infographic_slide(slide, slide_spec: Slide, fg: str, accent: str) -> None:
+    if slide_spec.eyebrow:
+        _add_eyebrow(slide, slide_spec.eyebrow, color_hex=accent)
+
+    title_tf = _add_textbox(slide, _MARGIN, _INFO_TITLE_TOP, _SLIDE_WIDTH - 2 * _MARGIN, Inches(0.55))
+    title_run = title_tf.paragraphs[0].add_run()
+    title_run.text = slide_spec.title
+    title_run.font.size = Pt(24)
+    title_run.font.bold = True
+    title_run.font.color.rgb = _rgb(fg)
+
+    subtitle_blocks = [b for b in slide_spec.body if b.type != "panels"]
+    panel_blocks = [b for b in slide_spec.body if b.type == "panels"]
+
+    if subtitle_blocks:
+        sub_tf = _add_textbox(slide, _MARGIN, _INFO_SUBTITLE_TOP, _SLIDE_WIDTH - 2 * _MARGIN, Inches(0.5))
+        for j, block in enumerate(subtitle_blocks):
+            _write_block(sub_tf, block, base_size=13, color_hex=fg, first=(j == 0))
+
+    if slide_spec.asset:
+        asset = slide_spec.asset
+        image_bytes = await _fetch_image_bytes(asset.ref) if asset.ref.startswith("http") else None
+        if image_bytes:
+            slide.shapes.add_picture(
+                io.BytesIO(image_bytes), _MARGIN, _INFO_ASSET_TOP,
+                width=_SLIDE_WIDTH - 2 * _MARGIN, height=_INFO_ASSET_HEIGHT,
+            )
+        else:
+            ph_tf = _add_textbox(slide, _MARGIN, _INFO_ASSET_TOP, _SLIDE_WIDTH - 2 * _MARGIN, _INFO_ASSET_HEIGHT)
+            p = ph_tf.paragraphs[0]
+            p.alignment = PP_ALIGN.CENTER
+            run = p.add_run()
+            run.text = f"[{asset.kind}: {asset.ref}]"
+            run.font.size = Pt(12)
+            run.font.italic = True
+            run.font.color.rgb = _rgb(fg)
+
+    for block in panel_blocks:
+        _add_panels(slide, block.panels, color_hex=fg, accent_hex=accent)
+
+    if slide_spec.citation:
+        _add_citation(slide, slide_spec.citation, color_hex=fg)
+
+
 async def _render_slide(prs: Presentation, deck: DeckSpec, slide_spec: Slide) -> None:
     theme = deck.theme
     blank_layout = prs.slide_layouts[6]  # layout em branco — controlamos tudo manualmente
@@ -147,6 +263,11 @@ async def _render_slide(prs: Presentation, deck: DeckSpec, slide_spec: Slide) ->
     else:
         _set_background(slide, theme.palette["background"])
         fg = theme.palette["text"]
+    accent = theme.palette.get("accent", theme.palette["primary"])
+
+    if slide_spec.layout == LayoutId.INFOGRAPHIC:
+        await _render_infographic_slide(slide, slide_spec, fg, accent)
+        return
 
     if slide_spec.layout in (LayoutId.COVER, LayoutId.CLOSING):
         _add_title(slide, slide_spec.title, color_hex=fg, size=40, center=True)
