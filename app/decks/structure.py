@@ -10,6 +10,7 @@ ver models.py) nem cor fora do que ele mesmo define em `theme` — depois de
 gerado, o `render` só consome o que está aqui, nunca improvisa.
 """
 
+import asyncio
 import json
 import logging
 from typing import Optional
@@ -17,12 +18,18 @@ from typing import Optional
 import asyncpg
 from pydantic import ValidationError
 
-from app.decks.llm.client import generate_text
+from app.decks.llm.client import LLMError, generate_text
 from app.decks.models import DeckSpec
 
 logger = logging.getLogger(__name__)
 
 MAX_STRUCTURE_ATTEMPTS = 3
+
+# Pausa antes de retentar quando a falha foi da CHAMADA em si (rede, 5xx da
+# API) — diferente da falha de formato (JSON/schema), aqui não adianta
+# corrigir o prompt, só dar um respiro pro provider (ex.: 503 passageiro,
+# já visto se repetir na prática).
+_API_RETRY_BACKOFF_SECONDS = 3
 
 # TODO(fatia futura): substituir esse guia textual pelas imagens de
 # referência few-shot que o stakeholder vai fornecer (few-shot visual de
@@ -79,8 +86,14 @@ async def generate_deck_structure(
 ) -> tuple[DeckSpec, int, int]:
     """
     Chama o LLM pra transformar o editorial em `DeckSpec`. Retenta até
-    `MAX_STRUCTURE_ATTEMPTS` vezes, anexando o erro de validação ao prompt
-    a cada nova tentativa.
+    `MAX_STRUCTURE_ATTEMPTS` vezes — por dois motivos distintos, tratados
+    separado:
+      - a CHAMADA em si falhou (`LLMError` — rede, 5xx da API, ex.: 503
+        passageiro do Gemini, já visto acontecer de verdade): retenta com o
+        MESMO prompt, depois de uma pausa curta. Não faz sentido "corrigir"
+        o prompt aqui — a IA nem chegou a responder.
+      - a RESPOSTA veio com formato errado (JSON quebrado, schema inválido):
+        retenta anexando o erro ao prompt, pra a IA se corrigir.
 
     Retorna (deck, tokens_entrada_total, tokens_saida_total).
     """
@@ -90,7 +103,22 @@ async def generate_deck_structure(
 
     for attempt in range(1, MAX_STRUCTURE_ATTEMPTS + 1):
         prompt = _build_prompt(editorial_text, previous_error)
-        raw_text, input_tok, output_tok = await generate_text(prompt, conn)
+
+        try:
+            raw_text, input_tok, output_tok = await generate_text(prompt, conn)
+        except LLMError as exc:
+            logger.warning(
+                "Tentativa %d/%d de chamar o LLM falhou (erro de API/rede, não de formato): %s",
+                attempt, MAX_STRUCTURE_ATTEMPTS, exc,
+            )
+            if attempt < MAX_STRUCTURE_ATTEMPTS:
+                await asyncio.sleep(_API_RETRY_BACKOFF_SECONDS)
+                continue
+            raise ValueError(
+                f"O LLM falhou {MAX_STRUCTURE_ATTEMPTS}x seguidas (erro de API/rede). "
+                f"Último erro: {exc}"
+            ) from exc
+
         total_input_tokens += input_tok
         total_output_tokens += output_tok
 
