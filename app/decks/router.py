@@ -7,6 +7,7 @@ sem dependency própria aqui, ver `validar_acesso` em main.py.
 
 import json
 import logging
+from datetime import datetime
 from typing import Literal, Optional
 from uuid import UUID
 
@@ -41,7 +42,22 @@ class DeckJobStatusResponse(BaseModel):
     id: UUID
     status: str
     cost_cents: int
+    created_at: datetime
     steps: list[StepStatus]
+
+
+class DeckJobSummary(BaseModel):
+    """Um item da listagem (GET /decks) — só o suficiente pra montar uma lista, não o detalhe todo."""
+
+    id: UUID
+    status: str
+    cost_cents: int
+    created_at: datetime
+    editorial_preview: str = Field(description="Primeiros ~80 caracteres do editorial, truncado no banco.")
+
+
+class DeckJobListResponse(BaseModel):
+    jobs: list[DeckJobSummary]
 
 
 def _to_status_response(job, steps) -> DeckJobStatusResponse:
@@ -49,6 +65,7 @@ def _to_status_response(job, steps) -> DeckJobStatusResponse:
         id=job["id"],
         status=job["status"],
         cost_cents=job["cost_cents"],
+        created_at=job["created_at"],
         steps=[
             StepStatus(
                 step=s["step"],
@@ -71,6 +88,30 @@ async def create_deck_job(req: CreateDeckJobRequest) -> DeckJobStatusResponse:
         steps = await repo.get_steps(job["id"])
         logger.info("Deck job criado — id=%s, user_id=%s", job["id"], req.user_id)
         return _to_status_response(job, steps)
+    raise HTTPException(status_code=503, detail="Banco de dados indisponível")
+
+
+@router.get("", response_model=DeckJobListResponse)
+async def list_deck_jobs(
+    user_id: UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> DeckJobListResponse:
+    """
+    Lista os jobs de um usuário, mais recentes primeiro (2026-08-19) — sem
+    isso, o frontend não tinha como recuperar o que já foi gerado depois de
+    perder a sessão (só sabia o ID de um job se guardasse em algum lugar do
+    lado do navegador, o que não sobrevive a logout/troca de aparelho). O
+    backend passa a ser a fonte de verdade da lista.
+
+    `user_id` obrigatório e não validado contra sessão nenhuma aqui — mesmo
+    espírito do `POST /decks`: quem garante que é o usuário certo é a
+    camada de auth do backend do frontend, não este serviço.
+    """
+    async for conn in get_db_conn():
+        repo = DeckJobRepository(conn)
+        rows = await repo.list_jobs_for_user(user_id, limit, offset)
+        return DeckJobListResponse(jobs=[DeckJobSummary(**dict(r)) for r in rows])
     raise HTTPException(status_code=503, detail="Banco de dados indisponível")
 
 

@@ -55,9 +55,35 @@ Autenticação: header `x-api-key` em todas as chamadas (case-insensitive, mas o
 
 ### `GET /decks/{job_id}` — consulta status (pra fazer polling)
 
-Mesmo formato de resposta do `POST`. `status` do job é `pending` → `running` → `completed` ou `failed`. Cada item de `steps` tem seu próprio `status`; um `error` preenchido explica o que deu errado naquela etapa especificamente.
+Mesmo formato de resposta do `POST`. `status` do job é `pending` → `running` → `completed` ou `failed`. Cada item de `steps` tem seu próprio `status`; um `error` preenchido explica o que deu errado naquela etapa especificamente. Ganhou o campo `created_at` (2026-08-19).
 
 **Fluxo de polling recomendado**: depois do `POST /decks`, faça `GET /decks/{job_id}` a cada ~3-5s até `status` virar `completed` ou `failed`. Use os `steps[].status` pra mostrar uma barra de progresso com 4 estágios (structure → assets → render → qa) — são estágios discretos reais, não um percentual contínuo.
+
+### `GET /decks?user_id={uuid}&limit=&offset=` — lista os jobs de um usuário (novo, 2026-08-19)
+
+Resolve o problema de "perdi a sessão e não sei mais o ID dos meus decks" — antes disso, a única forma de recuperar um job era guardar o ID em algum lugar do lado do frontend (localStorage, por exemplo), o que não sobrevive a logout/limpeza de dados/trocar de aparelho. Agora o backend é a fonte de verdade: consulta sempre por `user_id`, não depende de nada guardado no navegador.
+
+```jsonc
+// Request: GET /decks?user_id=13d32c21-0432-43b7-b787-cae9eb4f42b2&limit=50&offset=0
+// Response 200
+{
+  "jobs": [
+    {
+      "id": "3e903ed7-021b-48c4-bf6f-39a540825031",
+      "status": "completed",
+      "cost_cents": 0,
+      "created_at": "2026-08-19T23:00:00Z",
+      "editorial_preview": "Relatório: Modernização da Cadeia de Suprimentos via IA Prediti…"
+    }
+  ]
+}
+```
+
+- `user_id` é obrigatório — mesmo espírito do `POST /decks`, quem garante que é o usuário certo é a sessão já validada no backend do frontend, não este serviço.
+- `limit`/`offset` — paginação, mesmo padrão que o `GET /admin/conversations` de vocês já usa (`limit` 1-200, default 50).
+- `editorial_preview` já vem truncado (80 caracteres) pelo próprio banco — não existe um campo "título" separado no contrato, isso é o suficiente pra identificar qual deck é qual numa lista. Pra ver tudo, é só abrir o job (`GET /decks/{id}`).
+- Mais recentes primeiro (`created_at DESC`).
+- **Uso sugerido na tela**: ao carregar a tela (ou depois de logar de novo), chamar este endpoint com o `user_id` da sessão, renderizar a lista, e cada item abre pro fluxo normal de status/download já documentado. Ver `UI_SPEC_FRONTEND.md` atualizado.
 
 ### `GET /decks/{job_id}/download?format=pdf|pptx` — baixa o deck pronto
 
@@ -111,6 +137,21 @@ async def status_deck(job_id: str, user=Depends(get_current_user_session)):
     resp.raise_for_status()
     return resp.json()
 
+@router.get("")
+async def listar_meus_decks(
+    limit: int = 50, offset: int = 0, user=Depends(get_current_user_session)
+):
+    """user['sub'] já vem da sessão — a tela não precisa (nem deve) passar user_id manualmente."""
+    url = os.getenv("URL_API_DECKS")
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{url}/decks",
+            params={"user_id": user["sub"], "limit": limit, "offset": offset},
+            headers=_deck_service_headers(), timeout=30.0,
+        )
+    resp.raise_for_status()
+    return resp.json()
+
 @router.get("/{job_id}/download")
 async def baixar_deck(job_id: str, format: str = "pdf", user=Depends(get_current_user_session)):
     """Repassa o redirect — ou baixa aqui e repassa os bytes, se preferir não expor a URL assinada do Supabase direto ao browser."""
@@ -149,7 +190,7 @@ Desde 2026-08-18 a etapa `qa` roda checks reais (determinísticos, sem IA — ov
 
 ## 8. O que NÃO existe ainda (não assumir)
 
-- **Sem endpoint de listagem** — só `GET /decks/{job_id}` (por id conhecido). Se a tela precisar de "meus decks anteriores", isso precisa ser pedido como funcionalidade nova.
+- **Sem busca/filtro na listagem** — `GET /decks` lista tudo por `user_id`, paginado, mas não tem filtro por status/data/texto ainda. Se a tela precisar disso, é extensão nova.
 - **QA visual é só determinístico** — não há revisão por IA (ex.: "essa imagem combina com o texto?"); só overflow/contraste/asset não resolvido, ver seção 7.
 - **Geração de imagem real depende de billing habilitado no Gemini** — hoje a chave de teste está no tier gratuito (cota 0 pro modelo de imagem). Até isso ser resolvido, decks gerados no ambiente de teste podem ter placeholder no lugar de imagem (diagramas via Mermaid funcionam normalmente, sem essa dependência).
 - **Branding por cliente (`client_id`)** — o campo existe no contrato mas nenhum agente usa ele ainda pra fixar tema/logo; hoje o LLM escolhe o tema livremente a cada geração.

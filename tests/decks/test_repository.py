@@ -45,6 +45,49 @@ class TestCreateJob:
         assert inserted_steps == STEP_ORDER
 
 
+class TestListJobsForUser:
+    @pytest.mark.asyncio
+    async def test_queries_with_user_id_limit_and_offset(self):
+        conn = _mock_transaction_conn()
+        user_id = uuid.uuid4()
+        conn.fetch.return_value = []
+        repo = DeckJobRepository(conn)
+
+        await repo.list_jobs_for_user(user_id, limit=10, offset=20)
+
+        conn.fetch.assert_awaited_once()
+        sql, *args = conn.fetch.call_args.args
+        assert args == [user_id, 10, 20]
+        assert "WHERE user_id = $1" in sql
+        assert "ORDER BY created_at DESC" in sql
+
+    @pytest.mark.asyncio
+    async def test_uses_default_limit_and_offset(self):
+        conn = _mock_transaction_conn()
+        user_id = uuid.uuid4()
+        conn.fetch.return_value = []
+        repo = DeckJobRepository(conn)
+
+        await repo.list_jobs_for_user(user_id)
+
+        _, called_user_id, called_limit, called_offset = conn.fetch.call_args.args
+        assert (called_user_id, called_limit, called_offset) == (user_id, 50, 0)
+
+    @pytest.mark.asyncio
+    async def test_returns_rows_from_db(self):
+        conn = _mock_transaction_conn()
+        job_id = uuid.uuid4()
+        conn.fetch.return_value = [
+            {"id": job_id, "status": "completed", "cost_cents": 0, "created_at": None, "editorial_preview": "abc…"},
+        ]
+        repo = DeckJobRepository(conn)
+
+        rows = await repo.list_jobs_for_user(uuid.uuid4())
+
+        assert len(rows) == 1
+        assert rows[0]["id"] == job_id
+
+
 class TestGetSteps:
     @pytest.mark.asyncio
     async def test_orders_by_pipeline_order_not_creation_order(self):

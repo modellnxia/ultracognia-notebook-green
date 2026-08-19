@@ -46,6 +46,26 @@ class DeckJobRepository:
             "SELECT * FROM deck_jobs WHERE id = $1", job_id
         )
 
+    async def list_jobs_for_user(
+        self, user_id: UUID, limit: int = 50, offset: int = 0
+    ) -> list[asyncpg.Record]:
+        """
+        Lista os jobs de um usuário, mais recentes primeiro — pra tela
+        "meus decks" (2026-08-19) sobreviver a logout/troca de aparelho.
+        `editorial_preview` já vem truncado (LEFT) direto no SQL — evita
+        trazer o editorial inteiro pela rede só pra montar uma lista.
+        """
+        return await self.conn.fetch(
+            """
+            SELECT id, status, cost_cents, created_at, LEFT(editorial_text, 80) AS editorial_preview
+            FROM deck_jobs
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2 OFFSET $3
+            """,
+            user_id, limit, offset,
+        )
+
     async def get_steps(self, job_id: UUID) -> list[asyncpg.Record]:
         rows = await self.conn.fetch(
             "SELECT * FROM deck_job_steps WHERE job_id = $1 ORDER BY created_at",

@@ -239,6 +239,10 @@ não seu módulo), e variáveis de ambiente próprias (prefixo `DECK_*` /
     e gerou imagem real (via Pollinations) pra todo slide com asset — zero
     placeholder. QA: `issue_count: 0`.
   - 139 testes automatizados no total do módulo.
+- ✅ **Listagem de decks por usuário (2026-08-19)** — `GET /decks?user_id={uuid}&limit=&offset=`. Resolve um problema real relatado pelo usuário: perder a sessão (logout/troca de aparelho/limpar dados do navegador) fazia "sumir" o acesso aos decks já gerados, porque a única forma de recuperar um job era o frontend ter guardado o ID em algum lugar local. Agora o backend é a fonte de verdade — `DeckJobRepository.list_jobs_for_user` (mais recente primeiro, paginado, `editorial_preview` truncado em 80 caracteres direto no SQL). `DeckJobStatusResponse` também ganhou `created_at`.
+  - **Validado com dado real, na rota HTTP de verdade** (não só o repositório): jobs de teste criados no banco, request HTTP real através do router (`AsyncClient` + `ASGITransport`) contra o banco de teste real — 200 OK, ordenação e truncamento corretos, job de teste limpo depois.
+  - Documentação de handoff (`HANDOFF_FRONTEND.md`) e especificação de tela (`UI_SPEC_FRONTEND.md` + Artifact) atualizadas e republicadas nos mesmos links, antes mesmo do código estar pronto — pra o time de frontend poder começar a implementar em paralelo.
+  - 147 testes automatizados no total do módulo.
   - **Gaps conhecidos, não resolvidos ainda**: a relevância temática da
     imagem depende da qualidade do provider (Pollinations é mais solto que
     o Gemini seria com billing habilitado — ainda pendente); a paleta de
