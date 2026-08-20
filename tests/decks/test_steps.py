@@ -27,7 +27,9 @@ class TestRunStructure:
     async def test_reads_editorial_and_returns_deckspec_json(self):
         job_id = uuid.uuid4()
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"editorial_text": "editorial colado pelo usuário"})
+        conn.fetchrow = AsyncMock(
+            return_value={"editorial_text": "editorial colado pelo usuário", "llm_provider": None}
+        )
         deck = _valid_deck()
 
         with patch(
@@ -36,9 +38,28 @@ class TestRunStructure:
         ) as m_generate:
             output_ref, input_tok, output_tok, cost = await steps.run_structure(job_id, conn)
 
-        m_generate.assert_awaited_once_with("editorial colado pelo usuário", conn)
+        m_generate.assert_awaited_once_with(
+            "editorial colado pelo usuário", conn, preferred_provider=None
+        )
         assert json.loads(output_ref) == json.loads(deck.model_dump_json())
         assert (input_tok, output_tok, cost) == (100, 200, 0)
+
+    @pytest.mark.asyncio
+    async def test_passes_llm_provider_choice_through(self):
+        job_id = uuid.uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            return_value={"editorial_text": "editorial", "llm_provider": "deepseek"}
+        )
+        deck = _valid_deck()
+
+        with patch(
+            "app.decks.steps.generate_deck_structure",
+            new=AsyncMock(return_value=(deck, 10, 20)),
+        ) as m_generate:
+            await steps.run_structure(job_id, conn)
+
+        m_generate.assert_awaited_once_with("editorial", conn, preferred_provider="deepseek")
 
     @pytest.mark.asyncio
     async def test_raises_when_job_not_found(self):

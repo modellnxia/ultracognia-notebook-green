@@ -98,17 +98,36 @@ async def generate_text(
     conn: asyncpg.Connection,
     *,
     reference_images: list[tuple[bytes, str]] | None = None,
+    preferred_provider: str | None = None,
 ) -> tuple[str, int, int]:
     """
-    Gera texto tentando cada provider ativo em ordem de prioridade.
-    Retorna (texto, tokens_entrada, tokens_saida). Levanta LLMError só se
-    todos os providers com chave configurada falharem.
+    Gera texto. Dois modos:
+      - `preferred_provider=None` (padrão): tenta cada provider ativo em
+        ordem de prioridade, cai pro próximo se um falhar — comportamento
+        de sempre.
+      - `preferred_provider="gemini"/"deepseek"/"openrouter"` (2026-08-20 —
+        combo de escolha na tela): usa **só** esse provider, sem cair pra
+        outro se falhar. Escolha explícita do usuário pra poder comparar os
+        providers de verdade — cair silenciosamente pra outro destruiria a
+        comparação. Levanta `LLMError` se o provider escolhido não tiver
+        chave configurada ou falhar.
+
+    Retorna (texto, tokens_entrada, tokens_saida).
 
     `reference_images`: lista de (bytes, mime_type) — exemplos visuais
     anexados à chamada (few-shot), só têm efeito no Gemini (ver docstring do
-    módulo).
+    módulo) — os outros providers ignoram (o texto do prompt já carrega uma
+    descrição do mesmo padrão visual, ver structure.py, então não ficam sem
+    nenhum guia).
     """
     providers = await list_active_providers(conn)
+    if preferred_provider is not None:
+        providers = [p for p in providers if p["name"] == preferred_provider]
+        if not providers:
+            raise LLMError(
+                f"Provider '{preferred_provider}' não está cadastrado/ativo na tabela 'providers'."
+            )
+
     last_error: Exception | None = None
     tried_any = False
 

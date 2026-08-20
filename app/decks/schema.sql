@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS deck_jobs (
     user_id uuid NOT NULL REFERENCES users(id),
     client_id uuid REFERENCES clients(id),  -- dono da marca/tema; nullable até isso entrar em uso
     editorial_text text NOT NULL,  -- colado pelo usuário no chat da tela de geração; dado de entrada, não saída de etapa
+    llm_provider varchar,  -- gemini | deepseek | openrouter; NULL = fallback automático de sempre (2026-08-20, combo de escolha na tela)
     status varchar NOT NULL DEFAULT 'pending',  -- pending | running | completed | failed
     cost_cents integer NOT NULL DEFAULT 0,
     failure_reason text,
@@ -40,3 +41,7 @@ CREATE TABLE IF NOT EXISTS deck_job_steps (
 CREATE INDEX IF NOT EXISTS idx_deck_job_steps_pending
     ON deck_job_steps (created_at)
     WHERE status = 'pending';
+
+-- Migração manual 2026-08-20 (tabela já existia sem essa coluna — o
+-- CREATE TABLE IF NOT EXISTS acima não altera tabela já criada):
+-- ALTER TABLE deck_jobs ADD COLUMN IF NOT EXISTS llm_provider varchar;

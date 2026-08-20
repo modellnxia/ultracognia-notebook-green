@@ -152,3 +152,34 @@ class TestGenerateDeckStructureMixedFailures:
         assert isinstance(deck, DeckSpec)
         assert mock_generate.await_count == 3
         assert (in_tok, out_tok) == (7, 7)  # só as duas chamadas que responderam de verdade
+
+
+class TestGenerateDeckStructurePreferredProvider:
+    """Combo de escolha na tela (2026-08-20) — ver app/decks/llm/client.py."""
+
+    @pytest.mark.asyncio
+    async def test_passes_preferred_provider_through_to_generate_text(self):
+        conn = object()
+        mock_generate = AsyncMock(return_value=(_valid_deck_json(), 1, 1))
+
+        with patch("app.decks.structure.generate_text", mock_generate):
+            await structure.generate_deck_structure("editorial", conn, preferred_provider="deepseek")
+
+        assert mock_generate.await_args.kwargs["preferred_provider"] == "deepseek"
+
+    @pytest.mark.asyncio
+    async def test_defaults_to_none_when_not_specified(self):
+        conn = object()
+        mock_generate = AsyncMock(return_value=(_valid_deck_json(), 1, 1))
+
+        with patch("app.decks.structure.generate_text", mock_generate):
+            await structure.generate_deck_structure("editorial", conn)
+
+        assert mock_generate.await_args.kwargs["preferred_provider"] is None
+
+    def test_prompt_always_includes_fewshot_description_text(self):
+        """Reforço em texto pros providers que não recebem imagem (DeepSeek/OpenRouter não são multimodais aqui)."""
+        prompt = structure._build_prompt("editorial qualquer")
+        assert "eyebrow" in prompt.lower()
+        assert "painéis" in prompt.lower() or "paineis" in prompt.lower()
+        assert "citação" in prompt.lower() or "citacao" in prompt.lower()

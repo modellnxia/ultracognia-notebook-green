@@ -20,6 +20,15 @@ exemplos; (2) as imagens de referência do próprio usuário (vendorizadas em
 (multimodal — ver llm/client.py), fechando o TODO que só existia como texto
 antes. Isso fecha o gap entre "descrição em texto do que eu quero" e
 "aqui está literalmente o que eu quero, replica isso".
+
+Multi-provider com escolha explícita (2026-08-20): o usuário quer comparar
+Gemini/DeepSeek/OpenRouter de propósito (combo na tela do frontend) — ver
+`preferred_provider` em `generate_deck_structure`. DeepSeek e OpenRouter não
+recebem as imagens (só o Gemini é multimodal aqui, ver llm/client.py) —
+pra não deixar esses dois sem NENHUM guia visual, `_FEWSHOT_DESCRIPTION`
+descreve o mesmo padrão em texto, sempre incluída no prompt. Quando as
+imagens também estão anexadas (Gemini), a descrição em texto só reforça —
+não atrapalha.
 """
 
 import asyncio
@@ -47,6 +56,13 @@ _API_RETRY_BACKOFF_SECONDS = 3
 
 _FEWSHOT_DIR = Path(__file__).parent / "static" / "fewshot"
 
+_FEWSHOT_DESCRIPTION = """Descrição do padrão visual de referência (baseada em exemplos reais fornecidos pelo usuário). Se houver imagens anexadas a esta mensagem, elas SÃO esses exemplos — usam exatamente esse padrão, e a descrição abaixo só reforça o que elas já mostram. Se não houver imagem anexada (nem todo provider recebe imagem), esta descrição é o único guia — siga com a mesma atenção:
+- Cada slide de referência tem uma etiqueta de categoria curta no topo (eyebrow, ex.: "Gestão de Capital Humano | Retenção"), um título em negrito, e um subtítulo de uma frase de contexto.
+- Abaixo disso, UMA ilustração hero em estilo técnico/isométrico (tons escuros, iluminação dramática, uma metáfora visual específica pro conceito do slide — nunca uma foto genérica solta ou sem relação com o conteúdo).
+- Abaixo da ilustração, 2 a 4 painéis estruturados lado a lado, cada um com um título curto em negrito e uma descrição curta.
+- No rodapé, uma citação em itálico referenciando um framework/teoria de negócio real (ex.: "Operations Management — MIT Sloan", "Theory of Constraints — Goldratt").
+- Isso é o padrão do layout "infographic", descrito em detalhe abaixo."""
+
 _LAYOUT_GUIDE = """Layouts disponíveis — escolha o mais adequado pra cada slide, NUNCA invente um layout novo:
 - cover: slide de abertura, título grande, pouco conteúdo.
 - section-break: transição entre blocos de assunto, só título.
@@ -67,7 +83,9 @@ def _build_prompt(editorial_text: str, previous_error: Optional[str] = None) -> 
         )
     return f"""Você transforma um editorial de apresentação (texto livre, escrito por um humano) num documento estruturado (DeckSpec).
 
-As imagens anexadas a esta mensagem são exemplos REAIS do resultado visual esperado — cada uma mostra vários slides de referência (categoria/eyebrow, título, subtítulo, ilustração hero em estilo técnico/isométrico, painéis estruturados, citação de rodapé). Replique esse vocabulário visual sempre que o conteúdo do editorial pedir tratamento denso/analítico (layout "infographic", ver abaixo) — a paleta e o estilo de ilustração podem variar por deck (é você quem decide em `theme`), mas a ESTRUTURA da composição (eyebrow + título + subtítulo + ilustração + painéis + citação) deve seguir o padrão mostrado.
+{_FEWSHOT_DESCRIPTION}
+
+Replique esse vocabulário visual sempre que o conteúdo do editorial pedir tratamento denso/analítico (layout "infographic", ver abaixo) — a paleta e o estilo de ilustração podem variar por deck (é você quem decide em `theme`), mas a ESTRUTURA da composição (eyebrow + título + subtítulo + ilustração + painéis + citação) deve seguir o padrão descrito.
 
 {_LAYOUT_GUIDE}
 
@@ -117,7 +135,10 @@ def _load_fewshot_images() -> list[tuple[bytes, str]]:
 
 
 async def generate_deck_structure(
-    editorial_text: str, conn: asyncpg.Connection
+    editorial_text: str,
+    conn: asyncpg.Connection,
+    *,
+    preferred_provider: Optional[str] = None,
 ) -> tuple[DeckSpec, int, int]:
     """
     Chama o LLM pra transformar o editorial em `DeckSpec`. Retenta até
@@ -129,6 +150,9 @@ async def generate_deck_structure(
         o prompt aqui — a IA nem chegou a responder.
       - a RESPOSTA veio com formato errado (JSON quebrado, schema inválido):
         retenta anexando o erro ao prompt, pra a IA se corrigir.
+
+    `preferred_provider`: escolha explícita do usuário (combo na tela,
+    2026-08-20) — `None` mantém o fallback automático de sempre.
 
     Retorna (deck, tokens_entrada_total, tokens_saida_total).
     """
@@ -142,7 +166,7 @@ async def generate_deck_structure(
 
         try:
             raw_text, input_tok, output_tok = await generate_text(
-                prompt, conn, reference_images=reference_images
+                prompt, conn, reference_images=reference_images, preferred_provider=preferred_provider
             )
         except LLMError as exc:
             logger.warning(

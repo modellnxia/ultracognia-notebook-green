@@ -10,7 +10,7 @@ Duas partes: uma **lista dos decks já gerados** por aquele usuário (persistida
 ## Fluxo, passo a passo
 
 0. **Ao entrar na tela (ou logar de novo)**: chama `GET /decks` (com o `user_id` da sessão, via proxy) e mostra a lista de decks já gerados — mais recente primeiro, cada um com status e um resumo do editorial. Isso resolve o problema de antes: perder a sessão não perdia mais o acesso aos decks, porque a lista mora no backend, não no navegador.
-1. Usuário clica em "Gerar novo" (ou a lista já convive com o campo de entrada sempre visível, ver seção 04) e cola o editorial no campo de texto (textarea grande, tipo chat). Botão "Gerar slides" desabilitado enquanto vazio.
+1. Usuário clica em "Gerar novo" (ou a lista já convive com o campo de entrada sempre visível, ver seção 04) e cola o editorial no campo de texto (textarea grande, tipo chat). Botão "Gerar slides" desabilitado enquanto vazio. **Novo (2026-08-20)**: ao lado do campo, um combo/select pra escolher o provider de IA — ver seção "Seletor de provider de IA" abaixo.
 2. Usuário aciona a geração (Enter ou clique). Chama `POST /decks` via proxy do backend do frontend — responde em <1s, é só a criação do job.
 3. Campo trava, tela entra em "Processando". O editorial enviado continua visível, mas não editável. O novo job já aparece no topo da lista, com status "processando".
 4. Tela consulta `GET /decks/{id}` a cada 3–5s.
@@ -29,6 +29,16 @@ Duas partes: uma **lista dos decks já gerados** por aquele usuário (persistida
 | `render` | Montando PDF | Monta o PDF final, 16:9 |
 | `qa` | Verificando qualidade | Confere texto cortado, contraste de cor, imagens que falharam |
 
+## Seletor de provider de IA (novo, 2026-08-20)
+
+Pedido do cliente: poder escolher e comparar entre os providers de IA disponíveis, não só confiar no automático.
+
+- Um combo/select perto do campo de editorial, com as opções: **Automático** (padrão — omite o campo, o backend decide), **Gemini**, **DeepSeek**, **OpenRouter**.
+- A escolha é enviada como `llm_provider` no `POST /decks` (omitir = automático).
+- **Diferença importante de comportamento**: no automático, se um provider falhar o backend tenta o próximo sozinho. Quando o usuário escolhe um provider específico, **não há fallback** — se aquele provider falhar, o job vai pra "falhou" mesmo (é assim de propósito, pra permitir comparação real entre eles).
+- Hoje `openrouter` ainda não tem chave configurada do lado do backend — a opção pode aparecer no combo mesmo assim, só que qualquer job com ela ainda vai falhar com erro claro até a chave existir. Não precisa esconder a opção, só não é garantido funcionar ainda.
+- Sugestão: mostrar qual provider foi usado em cada item da lista (campo `llm_provider` já vem na resposta), tipo um selo pequeno "Gerado com: DeepSeek".
+
 ## Estados da tela
 
 - **Lista carregando** — nada renderizado ainda enquanto `GET /decks` não responde (deve ser rápido, é só uma consulta).
@@ -45,7 +55,7 @@ Duas partes: uma **lista dos decks já gerados** por aquele usuário (persistida
 
 | | |
 |---|---|
-| entra | `editorial_text` — texto puro colado pelo usuário |
+| entra | `editorial_text` — texto puro colado pelo usuário; opcional `llm_provider` (gemini/deepseek/openrouter, omitir = automático) |
 | sai | PDF **e** PPTX (os dois sempre gerados), cada um via URL assinada (1h) + `issues[]`/`issue_count` opcional do QA |
 | lista | `GET /decks` (com `user_id` da sessão) — mais recente primeiro, paginado (`limit`/`offset`), com `editorial_preview` truncado |
 | polling | a cada 3–5s até `status` virar `completed` ou `failed` |

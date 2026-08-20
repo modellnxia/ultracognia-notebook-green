@@ -155,3 +155,74 @@ class TestGenerateTextDispatch:
         ):
             with pytest.raises(client.LLMError, match="Todos os providers"):
                 await client.generate_text("prompt", conn)
+
+
+class TestGenerateTextPreferredProvider:
+    """Escolha explícita do combo na tela (2026-08-20) — usa SÓ o provider escolhido, sem cair pra outro."""
+
+    @pytest.mark.asyncio
+    async def test_uses_only_the_preferred_provider(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini-key")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-deepseek-key")
+        conn = object()
+        providers = [
+            {"name": "gemini", "url": "http://gemini", "priority": 1},
+            {"name": "deepseek", "url": "http://deepseek", "priority": 2},
+        ]
+
+        with (
+            patch("app.decks.llm.client.list_active_providers", new=AsyncMock(return_value=providers)),
+            patch("app.decks.llm.client._call_gemini", new=AsyncMock()) as m_gemini,
+            patch(
+                "app.decks.llm.client._call_openai_compatible",
+                new=AsyncMock(return_value=("ok do deepseek", 1, 1)),
+            ) as m_deepseek,
+        ):
+            result = await client.generate_text("prompt", conn, preferred_provider="deepseek")
+
+        assert result == ("ok do deepseek", 1, 1)
+        m_deepseek.assert_awaited_once()
+        m_gemini.assert_not_awaited()  # nem tenta o gemini, mesmo sendo prioridade 1
+
+    @pytest.mark.asyncio
+    async def test_does_not_fall_back_when_preferred_provider_fails(self, monkeypatch):
+        """Diferente do modo automático: se o provider escolhido falhar, não cai pra outro — é escolha explícita."""
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini-key")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-deepseek-key")
+        conn = object()
+        providers = [
+            {"name": "gemini", "url": "http://gemini", "priority": 1},
+            {"name": "deepseek", "url": "http://deepseek", "priority": 2},
+        ]
+
+        with (
+            patch("app.decks.llm.client.list_active_providers", new=AsyncMock(return_value=providers)),
+            patch("app.decks.llm.client._call_gemini", new=AsyncMock()) as m_gemini,
+            patch(
+                "app.decks.llm.client._call_openai_compatible",
+                new=AsyncMock(side_effect=RuntimeError("DeepSeek fora do ar")),
+            ),
+        ):
+            with pytest.raises(client.LLMError):
+                await client.generate_text("prompt", conn, preferred_provider="deepseek")
+
+        m_gemini.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_raises_when_preferred_provider_not_registered(self, monkeypatch):
+        conn = object()
+        providers = [{"name": "gemini", "url": "http://gemini", "priority": 1}]
+
+        with patch("app.decks.llm.client.list_active_providers", new=AsyncMock(return_value=providers)):
+            with pytest.raises(client.LLMError, match="openrouter"):
+                await client.generate_text("prompt", conn, preferred_provider="openrouter")
+
+    @pytest.mark.asyncio
+    async def test_raises_when_preferred_provider_has_no_key(self, monkeypatch):
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        conn = object()
+        providers = [{"name": "deepseek", "url": "http://deepseek", "priority": 2}]
+
+        with patch("app.decks.llm.client.list_active_providers", new=AsyncMock(return_value=providers)):
+            with pytest.raises(client.LLMError):
+                await client.generate_text("prompt", conn, preferred_provider="deepseek")

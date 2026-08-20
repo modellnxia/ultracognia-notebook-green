@@ -44,6 +44,31 @@ class TestCreateJob:
         inserted_steps = [call.args[2] for call in conn.execute.call_args_list]
         assert inserted_steps == STEP_ORDER
 
+    @pytest.mark.asyncio
+    async def test_passes_llm_provider_choice_to_insert(self):
+        """Combo de escolha na tela (2026-08-20)."""
+        conn = _mock_transaction_conn()
+        job_id, user_id = uuid.uuid4(), uuid.uuid4()
+        conn.fetchrow.return_value = {"id": job_id, "llm_provider": "deepseek"}
+        repo = DeckJobRepository(conn)
+
+        await repo.create_job(user_id, "texto colado", llm_provider="deepseek")
+
+        insert_args = conn.fetchrow.call_args.args
+        assert "deepseek" in insert_args
+
+    @pytest.mark.asyncio
+    async def test_llm_provider_defaults_to_none(self):
+        conn = _mock_transaction_conn()
+        job_id, user_id = uuid.uuid4(), uuid.uuid4()
+        conn.fetchrow.return_value = {"id": job_id, "llm_provider": None}
+        repo = DeckJobRepository(conn)
+
+        await repo.create_job(user_id, "texto colado")
+
+        insert_args = conn.fetchrow.call_args.args
+        assert insert_args[-1] is None  # llm_provider é o último parâmetro do INSERT
+
 
 class TestListJobsForUser:
     @pytest.mark.asyncio

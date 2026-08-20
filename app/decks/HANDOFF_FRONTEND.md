@@ -32,16 +32,19 @@ Autenticação: header `x-api-key` em todas as chamadas (case-insensitive, mas o
 {
   "user_id": "13d32c21-0432-43b7-b787-cae9eb4f42b2",   // uuid do usuário dono do deck
   "editorial_text": "texto completo colado pelo usuário no chat...",  // obrigatório, min 1 char
-  "client_id": null   // uuid opcional — reservado pra white-label (tema por cliente), ainda não usado por nenhum agente
+  "client_id": null,   // uuid opcional — reservado pra white-label (tema por cliente), ainda não usado por nenhum agente
+  "llm_provider": null   // novo, 2026-08-20 — "gemini" | "deepseek" | "openrouter" | omitir/null. Ver seção 3.1
 }
 ```
 
 ```jsonc
 // Response 201
 {
-  "id": "3e903ed7-021b-48c4-bf6f-39a540825031",
+  "id": "3e903ed7-021b-48c4-bf6f-31a539825031",
   "status": "pending",
   "cost_cents": 0,
+  "created_at": "2026-08-20T10:00:00Z",
+  "llm_provider": null,
   "steps": [
     {"step": "structure", "status": "pending", "attempt": 0, "output_ref": null, "error": null},
     {"step": "assets",    "status": "pending", "attempt": 0, "output_ref": null, "error": null},
@@ -52,6 +55,16 @@ Autenticação: header `x-api-key` em todas as chamadas (case-insensitive, mas o
 ```
 
 **Responde na hora** — quem processa de fato é um poller assíncrono do lado de cá (roda a cada ~5s). O front não espera a geração terminar nessa chamada.
+
+### 3.1. Escolha de provider de IA (`llm_provider`) — combo novo na tela (2026-08-20)
+
+Pedido explícito do cliente: poder **escolher e comparar** entre os 3 providers de IA disponíveis — `gemini`, `deepseek`, `openrouter`. Precisa de um combo/select na tela, com uma opção adicional de "automático" (que é omitir o campo, ou mandar `null`).
+
+- **Omitir o campo (ou `null`)** — comportamento de sempre: tenta o provider de maior prioridade (`gemini` hoje), cai pro próximo automaticamente se falhar.
+- **Valor explícito** (`"gemini"`, `"deepseek"` ou `"openrouter"`) — usa **só** esse provider. Se ele falhar, o job vai pra `failed` (não cai silenciosamente pra outro — é assim de propósito, pra vocês conseguirem comparar de verdade qual provider entrega o quê).
+- Hoje só `gemini` e `deepseek` têm chave configurada. `openrouter` já está pronto no código, só falta a chave (cliente ainda está gerando) — pode deixar a opção no combo mesmo assim, só vai dar erro claro (`failed`, com `error` explicando) até a chave existir.
+- **DeepSeek e OpenRouter não recebem as imagens de referência** (só o Gemini é multimodal) — o prompt deles usa uma descrição em texto do mesmo padrão visual como reforço. Validado de verdade: mesmo sem imagem, o DeepSeek escolheu o layout certo e preencheu os campos certos.
+- A resposta (`GET /decks/{id}` e cada item de `GET /decks`) mostra qual `llm_provider` foi usado em `llm_provider` — útil pra exibir um selo tipo "Gerado com: DeepSeek" na lista/no card do deck.
 
 ### `GET /decks/{job_id}` — consulta status (pra fazer polling)
 
@@ -73,6 +86,7 @@ Resolve o problema de "perdi a sessão e não sei mais o ID dos meus decks" — 
       "status": "completed",
       "cost_cents": 0,
       "created_at": "2026-08-19T23:00:00Z",
+      "llm_provider": "deepseek",
       "editorial_preview": "Relatório: Modernização da Cadeia de Suprimentos via IA Prediti…"
     }
   ]

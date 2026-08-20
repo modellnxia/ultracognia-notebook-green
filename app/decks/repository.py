@@ -16,19 +16,29 @@ class DeckJobRepository:
         self.conn = conn
 
     async def create_job(
-        self, user_id: UUID, editorial_text: str, client_id: Optional[UUID] = None
+        self,
+        user_id: UUID,
+        editorial_text: str,
+        client_id: Optional[UUID] = None,
+        llm_provider: Optional[str] = None,
     ) -> asyncpg.Record:
-        """Cria o job (com o editorial colado pelo usuário) e já grava as etapas como 'pending', em uma transação."""
+        """
+        Cria o job (com o editorial colado pelo usuário) e já grava as
+        etapas como 'pending', em uma transação. `llm_provider`: escolha
+        explícita do usuário (combo na tela, 2026-08-20) — `None` mantém o
+        fallback automático de sempre entre os providers ativos.
+        """
         async with self.conn.transaction():
             job = await self.conn.fetchrow(
                 """
-                INSERT INTO deck_jobs (user_id, client_id, editorial_text, status)
-                VALUES ($1, $2, $3, 'pending')
-                RETURNING id, user_id, client_id, editorial_text, status, cost_cents, created_at
+                INSERT INTO deck_jobs (user_id, client_id, editorial_text, llm_provider, status)
+                VALUES ($1, $2, $3, $4, 'pending')
+                RETURNING id, user_id, client_id, editorial_text, llm_provider, status, cost_cents, created_at
                 """,
                 user_id,
                 client_id,
                 editorial_text,
+                llm_provider,
             )
             for step in STEP_ORDER:
                 await self.conn.execute(
@@ -57,7 +67,7 @@ class DeckJobRepository:
         """
         return await self.conn.fetch(
             """
-            SELECT id, status, cost_cents, created_at, LEFT(editorial_text, 80) AS editorial_preview
+            SELECT id, status, cost_cents, created_at, llm_provider, LEFT(editorial_text, 80) AS editorial_preview
             FROM deck_jobs
             WHERE user_id = $1
             ORDER BY created_at DESC

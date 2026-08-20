@@ -32,12 +32,12 @@ async def run_structure(job_id: UUID, conn: asyncpg.Connection) -> StepResult:
     chama o LLM pra transformar em `DeckSpec` — layout, tema e blocos de
     conteúdo de cada slide, tudo numa chamada só (ver structure.py).
     """
-    row = await conn.fetchrow("SELECT editorial_text FROM deck_jobs WHERE id = $1", job_id)
+    row = await conn.fetchrow("SELECT editorial_text, llm_provider FROM deck_jobs WHERE id = $1", job_id)
     if row is None:
         raise ValueError(f"Job {job_id} não encontrado.")
 
     deck, input_tokens, output_tokens = await generate_deck_structure(
-        row["editorial_text"], conn
+        row["editorial_text"], conn, preferred_provider=row["llm_provider"]
     )
     output_ref = deck.model_dump_json()
     logger.info(

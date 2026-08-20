@@ -239,16 +239,22 @@ não seu módulo), e variáveis de ambiente próprias (prefixo `DECK_*` /
     e gerou imagem real (via Pollinations) pra todo slide com asset — zero
     placeholder. QA: `issue_count: 0`.
   - 139 testes automatizados no total do módulo.
-- ✅ **Listagem de decks por usuário (2026-08-19)** — `GET /decks?user_id={uuid}&limit=&offset=`. Resolve um problema real relatado pelo usuário: perder a sessão (logout/troca de aparelho/limpar dados do navegador) fazia "sumir" o acesso aos decks já gerados, porque a única forma de recuperar um job era o frontend ter guardado o ID em algum lugar local. Agora o backend é a fonte de verdade — `DeckJobRepository.list_jobs_for_user` (mais recente primeiro, paginado, `editorial_preview` truncado em 80 caracteres direto no SQL). `DeckJobStatusResponse` também ganhou `created_at`.
-  - **Validado com dado real, na rota HTTP de verdade** (não só o repositório): jobs de teste criados no banco, request HTTP real através do router (`AsyncClient` + `ASGITransport`) contra o banco de teste real — 200 OK, ordenação e truncamento corretos, job de teste limpo depois.
-  - Documentação de handoff (`HANDOFF_FRONTEND.md`) e especificação de tela (`UI_SPEC_FRONTEND.md` + Artifact) atualizadas e republicadas nos mesmos links, antes mesmo do código estar pronto — pra o time de frontend poder começar a implementar em paralelo.
-  - 147 testes automatizados no total do módulo.
   - **Gaps conhecidos, não resolvidos ainda**: a relevância temática da
     imagem depende da qualidade do provider (Pollinations é mais solto que
     o Gemini seria com billing habilitado — ainda pendente); a paleta de
     cor é decisão livre do LLM a cada geração, às vezes sai menos refinada
     (ex.: um ciano vibrante numa capa, na validação real) — não há curadoria
     de paleta ainda.
+- ✅ **Listagem de decks por usuário (2026-08-19)** — `GET /decks?user_id={uuid}&limit=&offset=`. Resolve um problema real relatado pelo usuário: perder a sessão (logout/troca de aparelho/limpar dados do navegador) fazia "sumir" o acesso aos decks já gerados, porque a única forma de recuperar um job era o frontend ter guardado o ID em algum lugar local. Agora o backend é a fonte de verdade — `DeckJobRepository.list_jobs_for_user` (mais recente primeiro, paginado, `editorial_preview` truncado em 80 caracteres direto no SQL). `DeckJobStatusResponse` também ganhou `created_at`.
+  - **Validado com dado real, na rota HTTP de verdade** (não só o repositório): jobs de teste criados no banco, request HTTP real através do router (`AsyncClient` + `ASGITransport`) contra o banco de teste real — 200 OK, ordenação e truncamento corretos, job de teste limpo depois.
+  - Documentação de handoff (`HANDOFF_FRONTEND.md`) e especificação de tela (`UI_SPEC_FRONTEND.md` + Artifact) atualizadas e republicadas nos mesmos links, antes mesmo do código estar pronto — pra o time de frontend poder começar a implementar em paralelo.
+  - 147 testes automatizados no total do módulo.
+- ✅ **Multi-provider com escolha explícita — Gemini/DeepSeek/OpenRouter (2026-08-20)** — pedido do cliente: comparar os providers de IA de propósito, não só confiar no fallback automático. `POST /decks` ganhou `llm_provider` opcional — se informado, usa **só** aquele provider (sem cair pra outro se falhar, de propósito, pra permitir comparação real). `llm/client.py::generate_text` ganhou `preferred_provider`; `structure.py` repassa a escolha do job. Coluna nova `deck_jobs.llm_provider` (migração manual aplicada no banco de teste).
+  - **DeepSeek/OpenRouter não recebem as imagens de referência** (só o Gemini é multimodal aqui) — pra não ficarem sem nenhum guia visual, `_FEWSHOT_DESCRIPTION` (texto descrevendo o mesmo padrão: eyebrow, ilustração, painéis, citação) agora é sempre incluída no prompt, reforçando as imagens quando presentes (Gemini) e servindo como único guia quando não (DeepSeek/OpenRouter).
+  - **Validado com a chave real do DeepSeek**: `llm_provider="deepseek"` forçado de propósito, chamada real (confirmado nos logs: nunca tentou o Gemini) — mesmo sem imagem, escolheu `infographic` corretamente em 3 de 4 slides, preencheu eyebrow/painéis.
+  - Documentação atualizada e republicada nos mesmos links **antes** da implementação terminar, a pedido do usuário, pra o frontend poder construir o combo em paralelo.
+  - 159 testes automatizados no total do módulo.
+  - **Pendências**: chave do OpenRouter ainda não existe (cliente gerando) — endpoint já aceita a opção, só vai falhar até a chave existir. `openrouter` tem prioridade 3 na tabela `providers`, nunca testado de verdade neste pipeline ainda.
 
 ## Integração com o frontend (`ultracognia-frontend-green`)
 

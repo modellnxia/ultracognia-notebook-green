@@ -28,6 +28,10 @@ class CreateDeckJobRequest(BaseModel):
     user_id: UUID
     editorial_text: str = Field(min_length=1, description="Editorial colado pelo usuário no chat")
     client_id: Optional[UUID] = None
+    llm_provider: Optional[Literal["gemini", "deepseek", "openrouter"]] = Field(
+        default=None,
+        description="Escolha explícita do combo na tela (2026-08-20). Omitir = fallback automático de sempre entre os providers ativos.",
+    )
 
 
 class StepStatus(BaseModel):
@@ -43,6 +47,7 @@ class DeckJobStatusResponse(BaseModel):
     status: str
     cost_cents: int
     created_at: datetime
+    llm_provider: Optional[str] = None
     steps: list[StepStatus]
 
 
@@ -53,6 +58,7 @@ class DeckJobSummary(BaseModel):
     status: str
     cost_cents: int
     created_at: datetime
+    llm_provider: Optional[str] = None
     editorial_preview: str = Field(description="Primeiros ~80 caracteres do editorial, truncado no banco.")
 
 
@@ -66,6 +72,7 @@ def _to_status_response(job, steps) -> DeckJobStatusResponse:
         status=job["status"],
         cost_cents=job["cost_cents"],
         created_at=job["created_at"],
+        llm_provider=job["llm_provider"],
         steps=[
             StepStatus(
                 step=s["step"],
@@ -84,7 +91,7 @@ async def create_deck_job(req: CreateDeckJobRequest) -> DeckJobStatusResponse:
     """Cria o job e já enfileira as 4 etapas como 'pending'. Responde na hora — quem processa é o poller."""
     async for conn in get_db_conn():
         repo = DeckJobRepository(conn)
-        job = await repo.create_job(req.user_id, req.editorial_text, req.client_id)
+        job = await repo.create_job(req.user_id, req.editorial_text, req.client_id, req.llm_provider)
         steps = await repo.get_steps(job["id"])
         logger.info("Deck job criado — id=%s, user_id=%s", job["id"], req.user_id)
         return _to_status_response(job, steps)
