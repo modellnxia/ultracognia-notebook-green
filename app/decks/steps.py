@@ -39,6 +39,26 @@ _IMAGE_PROVIDER_BY_LLM_PROVIDER = {
 }
 
 
+async def _validation_context_for_job(job_id: UUID, conn: asyncpg.Connection) -> dict:
+    """
+    Bug real corrigido em 2026-08-21 (5): `structure` valida o `DeckSpec` com
+    o contexto certo (`enforce_dark_background=apply_style_guardrails`), mas
+    `assets`/`render`/`qa` cada uma reprocessa o mesmo JSON com
+    `DeckSpec.model_validate(...)` **sem contexto nenhum** — cai no fallback
+    estrito (sempre exige fundo escuro), rejeitando de novo, numa etapa
+    seguinte, um deck que já tinha sido aceito de propósito na etapa
+    `structure` com o guardrail desligado. Sintoma real visto em produção:
+    job com `apply_style_guardrails=false` e fundo claro do próprio editorial
+    passava em `structure` e quebrava em `assets`/`qa` — dependia de sorte do
+    LLM ter escolhido um tom escuro por conta própria pra não estourar.
+    Todas as etapas que revalidam o `DeckSpec` precisam buscar o mesmo
+    `apply_style_guardrails` do job e usar o mesmo contexto, sempre.
+    """
+    job_row = await conn.fetchrow("SELECT apply_style_guardrails FROM deck_jobs WHERE id = $1", job_id)
+    apply_style_guardrails = job_row["apply_style_guardrails"] if job_row else False
+    return {"enforce_dark_background": apply_style_guardrails}
+
+
 async def run_structure(job_id: UUID, conn: asyncpg.Connection) -> StepResult:
     """
     Lê o `editorial_text` colado pelo usuário (gravado na criação do job) e
@@ -128,7 +148,9 @@ async def run_assets(job_id: UUID, conn: asyncpg.Connection) -> StepResult:
     if structure_row is None or structure_row["output_ref"] is None:
         raise ValueError(f"Etapa 'structure' do job {job_id} ainda não tem resultado.")
 
-    job_row = await conn.fetchrow("SELECT llm_provider FROM deck_jobs WHERE id = $1", job_id)
+    job_row = await conn.fetchrow(
+        "SELECT llm_provider, apply_style_guardrails FROM deck_jobs WHERE id = $1", job_id
+    )
     llm_provider = job_row["llm_provider"] if job_row else None
     image_provider = _IMAGE_PROVIDER_BY_LLM_PROVIDER.get(llm_provider)
     if llm_provider and image_provider is None:
@@ -136,8 +158,10 @@ async def run_assets(job_id: UUID, conn: asyncpg.Connection) -> StepResult:
             "Job %s com llm_provider=%r sem mapeamento de provider de imagem conhecido — "
             "caindo pro default (DECK_IMAGE_PROVIDER).", job_id, llm_provider,
         )
+    apply_style_guardrails = job_row["apply_style_guardrails"] if job_row else False
+    validation_context = {"enforce_dark_background": apply_style_guardrails}
 
-    deck = DeckSpec.model_validate(json.loads(structure_row["output_ref"]))
+    deck = DeckSpec.model_validate(json.loads(structure_row["output_ref"]), context=validation_context)
 
     await ensure_bucket_exists()
     for slide in deck.slides:
@@ -171,7 +195,8 @@ async def run_render(job_id: UUID, conn: asyncpg.Connection) -> StepResult:
     if assets_row is None or assets_row["output_ref"] is None:
         raise ValueError(f"Etapa 'assets' do job {job_id} ainda não tem resultado.")
 
-    deck = DeckSpec.model_validate(json.loads(assets_row["output_ref"]))
+    validation_context = await _validation_context_for_job(job_id, conn)
+    deck = DeckSpec.model_validate(json.loads(assets_row["output_ref"]), context=validation_context)
     deck_for_render = await _with_resolved_asset_urls(deck)
 
     await ensure_bucket_exists()
@@ -225,7 +250,8 @@ async def run_qa(job_id: UUID, conn: asyncpg.Connection) -> StepResult:
     if assets_row is None or assets_row["output_ref"] is None:
         raise ValueError(f"Etapa 'assets' do job {job_id} ainda não tem resultado.")
 
-    deck = DeckSpec.model_validate(json.loads(assets_row["output_ref"]))
+    validation_context = await _validation_context_for_job(job_id, conn)
+    deck = DeckSpec.model_validate(json.loads(assets_row["output_ref"]), context=validation_context)
     report = await check_deck(deck)
     logger.info(
         "QA do job %s concluído — %d problema(s) encontrado(s)", job_id, report["issue_count"]

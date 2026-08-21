@@ -84,7 +84,7 @@ class TestRunAssets:
         deck = _valid_deck()  # slide único, sem asset
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
-            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None}]
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None, "apply_style_guardrails": False}]
         )
 
         with (
@@ -110,7 +110,7 @@ class TestRunAssets:
         slide_id = deck.slides[0].id
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
-            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": "gemini"}]
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": "gemini", "apply_style_guardrails": False}]
         )
 
         with (
@@ -138,7 +138,7 @@ class TestRunAssets:
         slide_id = deck.slides[0].id
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
-            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None}]
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None, "apply_style_guardrails": False}]
         )
 
         with (
@@ -165,7 +165,7 @@ class TestRunAssets:
         deck.slides[0].asset = SlideAsset(kind="image", ref="prompt original")
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
-            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None}]
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None, "apply_style_guardrails": False}]
         )
 
         with (
@@ -189,7 +189,7 @@ class TestRunAssets:
         deck.slides[0].asset = SlideAsset(kind="diagram", ref="flowchart LR\nA-->B")
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
-            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None}]
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None, "apply_style_guardrails": False}]
         )
 
         with (
@@ -222,7 +222,9 @@ class TestRunRender:
         job_id = uuid.uuid4()
         deck = _valid_deck()
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"output_ref": deck.model_dump_json()})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"apply_style_guardrails": False}]
+        )
 
         with (
             patch("app.decks.steps.render_deck_html", return_value="<html>x</html>") as m_html,
@@ -253,7 +255,9 @@ class TestRunRender:
         object_path = f"{job_id}/assets/{deck.slides[0].id}.png"
         deck.slides[0].asset = SlideAsset(kind="image", ref=object_path)
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"output_ref": deck.model_dump_json()})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"apply_style_guardrails": False}]
+        )
 
         with (
             patch("app.decks.steps.render_deck_html", return_value="<html>x</html>") as m_html,
@@ -290,7 +294,9 @@ class TestRunQa:
         job_id = uuid.uuid4()
         deck = _valid_deck()
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"output_ref": deck.model_dump_json()})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"apply_style_guardrails": False}]
+        )
         fake_report = {"issues": [{"slide_id": "x", "kind": "overflow", "message": "..."}], "issue_count": 1}
 
         with patch(
@@ -331,7 +337,7 @@ class TestRunAssetsImageProviderMapping:
         deck.slides[0].asset = SlideAsset(kind="image", ref="um prompt qualquer")
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
-            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": llm_provider}]
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": llm_provider, "apply_style_guardrails": False}]
         )
 
         with (
@@ -354,7 +360,7 @@ class TestRunAssetsImageProviderMapping:
         deck.slides[0].asset = SlideAsset(kind="image", ref="um prompt qualquer")
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
-            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None}]
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None, "apply_style_guardrails": False}]
         )
 
         with (
@@ -376,7 +382,7 @@ class TestRunAssetsImageProviderMapping:
         deck.slides[0].asset = SlideAsset(kind="image", ref="um prompt qualquer")
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
-            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": "openrouter"}]
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": "openrouter", "apply_style_guardrails": False}]
         )
 
         with (
@@ -389,3 +395,134 @@ class TestRunAssetsImageProviderMapping:
             await steps.run_assets(job_id, conn)
 
         m_image.assert_awaited_once_with("um prompt qualquer", provider=None)
+
+
+class TestRevalidationRespectsGuardrailContext:
+    """
+    Bug real corrigido em 2026-08-21 (5) — reportado com prints reais em
+    produção: `structure` validava o DeckSpec com o `apply_style_guardrails`
+    certo do job, mas `assets`/`render`/`qa` revalidavam o MESMO JSON sem
+    contexto nenhum (fallback estrito, sempre exige fundo escuro) — um deck
+    aceito de propósito em `structure` (guardrail desligado, fundo claro do
+    próprio editorial) quebrava numa etapa seguinte. Dependia de sorte do
+    LLM ter escolhido um tom escuro por conta própria pra não estourar —
+    exatamente o que aconteceu (Gemini "escapou", OpenAI não, no relato real).
+    """
+
+    def _light_background_deck_json(self) -> str:
+        return json.dumps(
+            {
+                "version": "1.0",
+                "theme": {
+                    "palette": {"primary": "#0A192F", "background": "#F8FAFC", "text": "#1E293B"},
+                    "font_stack": "Georgia",
+                },
+                "slides": [{"layout": "cover", "title": "X"}],
+            }
+        )
+
+    @pytest.mark.asyncio
+    async def test_run_assets_accepts_light_background_when_guardrail_off(self):
+        job_id = uuid.uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"output_ref": self._light_background_deck_json()},
+                {"llm_provider": "openai", "apply_style_guardrails": False},
+            ]
+        )
+        with patch("app.decks.steps.ensure_bucket_exists", new=AsyncMock()):
+            output_ref, *_ = await steps.run_assets(job_id, conn)
+        assert json.loads(output_ref)["theme"]["palette"]["background"] == "#F8FAFC"
+
+    @pytest.mark.asyncio
+    async def test_run_assets_rejects_light_background_when_guardrail_on(self):
+        job_id = uuid.uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"output_ref": self._light_background_deck_json()},
+                {"llm_provider": "openai", "apply_style_guardrails": True},
+            ]
+        )
+        with pytest.raises(Exception, match="claro demais"):
+            await steps.run_assets(job_id, conn)
+
+    @pytest.mark.asyncio
+    async def test_run_render_accepts_light_background_when_guardrail_off(self):
+        job_id = uuid.uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"output_ref": self._light_background_deck_json()},
+                {"apply_style_guardrails": False},
+            ]
+        )
+        with (
+            patch("app.decks.steps.render_deck_html", return_value="<html>x</html>"),
+            patch("app.decks.steps.render_deck_pdf", new=AsyncMock(return_value=b"%PDF-fake")),
+            patch("app.decks.steps.render_deck_pptx", new=AsyncMock(return_value=b"PK-fake")),
+            patch("app.decks.steps.ensure_bucket_exists", new=AsyncMock()),
+            patch("app.decks.steps.upload_object", new=AsyncMock()),
+        ):
+            output_ref, *_ = await steps.run_render(job_id, conn)  # não deve levantar
+        assert "pdf" in json.loads(output_ref)
+
+    @pytest.mark.asyncio
+    async def test_run_render_rejects_light_background_when_guardrail_on(self):
+        job_id = uuid.uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"output_ref": self._light_background_deck_json()},
+                {"apply_style_guardrails": True},
+            ]
+        )
+        with pytest.raises(Exception, match="claro demais"):
+            await steps.run_render(job_id, conn)
+
+    @pytest.mark.asyncio
+    async def test_run_qa_accepts_light_background_when_guardrail_off(self):
+        job_id = uuid.uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"output_ref": self._light_background_deck_json()},
+                {"apply_style_guardrails": False},
+            ]
+        )
+        with patch(
+            "app.decks.steps.check_deck", new=AsyncMock(return_value={"issues": [], "issue_count": 0})
+        ):
+            output_ref, *_ = await steps.run_qa(job_id, conn)  # não deve levantar
+        assert json.loads(output_ref)["issue_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_run_qa_rejects_light_background_when_guardrail_on(self):
+        job_id = uuid.uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"output_ref": self._light_background_deck_json()},
+                {"apply_style_guardrails": True},
+            ]
+        )
+        with pytest.raises(Exception, match="claro demais"):
+            await steps.run_qa(job_id, conn)
+
+    @pytest.mark.asyncio
+    async def test_run_assets_defaults_to_false_when_job_row_missing(self):
+        """
+        Job não encontrado no meio do pipeline (não devia acontecer na
+        prática, o mesmo job cuja etapa 'structure' já rodou) — o fallback
+        é `apply_style_guardrails=False`, consistente com o default do
+        produto (2026-08-21 (4)), não um modo estrito à parte.
+        """
+        job_id = uuid.uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"output_ref": self._light_background_deck_json()}, None]
+        )
+        with patch("app.decks.steps.ensure_bucket_exists", new=AsyncMock()):
+            output_ref, *_ = await steps.run_assets(job_id, conn)  # não deve levantar
+        assert json.loads(output_ref)["theme"]["palette"]["background"] == "#F8FAFC"
