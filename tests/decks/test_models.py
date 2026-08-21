@@ -15,7 +15,7 @@ from app.decks.models import (
 
 def _valid_theme() -> Theme:
     return Theme(
-        palette={"primary": "#1A2B3C", "background": "#0D1B2E", "text": "#F2F2F2"},
+        palette={"primary": "#3B82F6", "background": "#0D1B2E", "text": "#F2F2F2"},
         font_stack="Inter, system-ui, sans-serif",
     )
 
@@ -112,7 +112,7 @@ class TestThemeBackgroundMustBeDark:
         # a IA continua livre pra escolher QUALQUER matiz escuro — não é 1
         # cor fixa, é uma faixa de luminância (ver models.py).
         theme = Theme(
-            palette={"primary": "#1A2B3C", "background": background, "text": "#F2F2F2"},
+            palette={"primary": "#3B82F6", "background": background, "text": "#F2F2F2"},
             font_stack="Inter",
         )
         assert theme.palette["background"] == background
@@ -154,6 +154,50 @@ class TestThemeBackgroundMustBeDark:
         with pytest.raises(ValidationError, match="claro demais"):
             Theme.model_validate(
                 {"palette": {"primary": "#1A2B3C", "background": "#FFFFFF", "text": "#111"}, "font_stack": "Inter"}
+            )
+
+
+class TestThemeBackgroundAndPrimaryMustBeDistinguishable:
+    """
+    Achado real em produção (2026-08-21 (7)): a IA escolheu background=#081421
+    e primary=#0A192F — quase idênticos (contraste 1.05:1). O CSS usa
+    `primary` como cor de TEXTO nos slides de tela cheia (cover/section-break/
+    closing invertem fundo↔primary) — ficou ilegível. Diferente do guardrail
+    de fundo escuro (opinião de estilo, gated pelo checkbox), este é garantia
+    de renderização legível — sempre ativo, com ou sem contexto.
+    """
+
+    def test_rejects_near_identical_background_and_primary(self):
+        with pytest.raises(ValidationError, match="contraste baixo demais"):
+            Theme(
+                palette={"primary": "#0A192F", "background": "#081421", "text": "#F2F2F2"},
+                font_stack="Inter",
+            )
+
+    def test_accepts_sufficiently_distinct_colors(self):
+        theme = Theme(
+            palette={"primary": "#3B82F6", "background": "#0D1B2E", "text": "#F2F2F2"},
+            font_stack="Inter",
+        )
+        assert theme.palette["primary"] == "#3B82F6"
+
+    def test_stays_active_even_when_dark_background_guardrail_is_disabled(self):
+        """Não é opinião de estilo — não é desligado pelo checkbox (diferente de background_must_be_dark)."""
+        with pytest.raises(ValidationError, match="contraste baixo demais"):
+            Theme.model_validate(
+                {
+                    "palette": {"primary": "#0A192F", "background": "#081421", "text": "#F2F2F2"},
+                    "font_stack": "Inter",
+                },
+                context={"enforce_dark_background": False},
+            )
+
+    def test_does_not_duplicate_error_when_hex_already_invalid(self):
+        # background_must_be_dark já pega hex inválido antes — não deve chegar aqui
+        with pytest.raises(ValidationError, match="não é um hex válido"):
+            Theme(
+                palette={"primary": "#0A192F", "background": "not-a-color", "text": "#111"},
+                font_stack="Inter",
             )
 
 

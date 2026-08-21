@@ -20,7 +20,7 @@ from app.decks.render import render_deck_html
 
 def _theme(**overrides) -> Theme:
     defaults = dict(
-        palette={"primary": "#123456", "background": "#0D1B2E", "text": "#F2F2F2"},
+        palette={"primary": "#3B82F6", "background": "#0D1B2E", "text": "#F2F2F2"},
         font_stack="Inter, sans-serif",
     )
     defaults.update(overrides)
@@ -34,7 +34,7 @@ class TestThemeInjection:
             slides=[Slide(layout=LayoutId.COVER, title="Título")],
         )
         html = render_deck_html(deck)
-        assert "--color-primary: #123456;" in html
+        assert "--color-primary: #3B82F6;" in html
         assert "--color-background: #0D1B2E;" in html
         assert "--color-text: #F2F2F2;" in html
         assert "--font-stack: Inter, sans-serif;" in html

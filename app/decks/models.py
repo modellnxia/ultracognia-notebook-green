@@ -57,6 +57,24 @@ def _relative_luminance(hex_color: str) -> float:
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
+def _contrast_ratio(hex_a: str, hex_b: str) -> float:
+    """Razão de contraste WCAG entre 2 cores — 1:1 (idênticas) a 21:1 (preto/branco)."""
+    l_a, l_b = _relative_luminance(hex_a), _relative_luminance(hex_b)
+    lighter, darker = max(l_a, l_b), min(l_a, l_b)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+# Achado real em produção (2026-08-21 (7)): a IA escolheu background=#081421 e
+# primary=#0A192F — tons quase idênticos (contraste 1.05:1). O CSS usa
+# `primary` como cor de destaque/fundo dos slides de tela cheia (cover/
+# section-break/closing, onde o CSS INVERTE: fundo do tema vira cor do
+# texto) — com as duas cores próximas assim, esse texto fica ilegível.
+# Diferente de `background_must_be_dark` (guardrail de ESTILO, gated pelo
+# checkbox): isso aqui é garantia de RENDERIZAÇÃO LEGÍVEL, não opinião
+# estética — fica ativo sempre, independente do checkbox.
+_MIN_BACKGROUND_PRIMARY_CONTRAST = 3.0
+
+
 class Theme(BaseModel):
     """
     Identidade visual de UM deck. Nunca decidida pelo `render` — só consumida
@@ -112,6 +130,33 @@ class Theme(BaseModel):
                 f"{luminance:.2f} ≥ {_MAX_BACKGROUND_LUMINANCE}) — os exemplos de referência "
                 "usam sempre um fundo escuro (navy, petróleo, grafite, bordô-escuro etc.). "
                 "Escolha um tom escuro coerente com o tema do conteúdo, nunca branco/claro."
+            )
+        return v
+
+    @field_validator("palette")
+    @classmethod
+    def background_and_primary_must_be_distinguishable(cls, v: dict[str, str]) -> dict[str, str]:
+        """
+        Sempre ativo — não é opinião de estilo (ver comentário de
+        `_MIN_BACKGROUND_PRIMARY_CONTRAST`), é garantia de que o `primary`
+        não vira invisível quando o CSS o usa como cor de texto (slides de
+        tela cheia — cover/section-break/closing invertem fundo↔primary).
+        """
+        background, primary = v.get("background"), v.get("primary")
+        if background is None or primary is None:
+            return v
+        try:
+            ratio = _contrast_ratio(background, primary)
+        except (ValueError, IndexError):
+            return v  # hex inválido já é pego pelo validador de fundo escuro, não duplica o erro aqui
+        if ratio < _MIN_BACKGROUND_PRIMARY_CONTRAST:
+            raise ValueError(
+                f'palette["background"] ({background!r}) e palette["primary"] ({primary!r}) '
+                f"têm contraste baixo demais entre si ({ratio:.2f}:1, mínimo "
+                f"{_MIN_BACKGROUND_PRIMARY_CONTRAST}:1) — o CSS usa 'primary' como cor de "
+                "texto nos slides de tela cheia (cover/section-break/closing), então as duas "
+                "cores ficarem parecidas deixa esse texto ilegível. Escolha um 'primary' "
+                "visivelmente diferente do 'background', não só uma variação sutil do mesmo tom."
             )
         return v
 

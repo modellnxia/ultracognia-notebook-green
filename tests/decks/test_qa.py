@@ -24,7 +24,10 @@ from app.decks.models import (
 
 
 def _theme(**overrides) -> Theme:
-    defaults = {"primary": "#0F172A", "background": "#0D1B2E", "text": "#F2F2F2"}
+    # primary/background com contraste suficiente entre si por padrão (2026-08-21
+    # (7): Theme agora valida isso sempre, achado real em produção) — testes que
+    # querem testar baixo contraste de propósito sobrescrevem explicitamente.
+    defaults = {"primary": "#3B82F6", "background": "#0D1B2E", "text": "#F2F2F2"}
     defaults.update(overrides)
     return Theme(palette=defaults, font_stack="Inter, sans-serif")
 
@@ -62,8 +65,16 @@ class TestCheckContrast:
         assert any(i["kind"] == "low_contrast" and "text" in i["message"] for i in issues)
 
     def test_flags_low_contrast_background_on_primary(self):
-        # cor de fundo (usada como texto nos slides de tela cheia) muito parecida com primary
-        theme = _theme(primary="#3355FF", background="#3350F5", text="#000000")
+        # cor de fundo (usada como texto nos slides de tela cheia) muito parecida com primary —
+        # desde 2026-08-21 (7) o `Theme` normal nem CONSTRÓI mais com esse par (validação
+        # própria, achado real em produção) — usa `model_construct` pra pular a validação e
+        # ainda testar a lógica própria de `qa._check_contrast` isoladamente (defesa em
+        # profundidade: o soft-check do QA continua existindo, mesmo que hoje inatingível
+        # via `Theme` construído normalmente).
+        theme = Theme.model_construct(
+            palette={"primary": "#3355FF", "background": "#3350F5", "text": "#000000"},
+            font_stack="Inter, sans-serif",
+        )
         issues = qa._check_contrast(theme)
         assert any(i["kind"] == "low_contrast" and "primary" in i["message"] for i in issues)
 

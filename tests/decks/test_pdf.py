@@ -13,7 +13,7 @@ from app.decks.render import render_deck_html
 
 def _sample_deck(n_slides: int) -> DeckSpec:
     theme = Theme(
-        palette={"primary": "#123456", "background": "#0D1B2E", "text": "#F2F2F2"},
+        palette={"primary": "#3B82F6", "background": "#0D1B2E", "text": "#F2F2F2"},
         font_stack="Arial, sans-serif",
     )
     slides = [Slide(layout=LayoutId.COVER, title=f"Slide {i}") for i in range(n_slides)]
