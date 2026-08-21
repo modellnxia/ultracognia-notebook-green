@@ -21,7 +21,7 @@ class DeckJobRepository:
         editorial_text: str,
         client_id: Optional[UUID] = None,
         llm_provider: Optional[str] = None,
-        apply_style_guardrails: bool = True,
+        apply_style_guardrails: bool = False,
     ) -> asyncpg.Record:
         """
         Cria o job (com o editorial colado pelo usuário) e já grava as

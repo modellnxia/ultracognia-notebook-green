@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS deck_jobs (
     client_id uuid REFERENCES clients(id),  -- dono da marca/tema; nullable até isso entrar em uso
     editorial_text text NOT NULL,  -- colado pelo usuário no chat da tela de geração; dado de entrada, não saída de etapa
     llm_provider varchar,  -- gemini | deepseek | openai (openrouter removido do combo em 2026-08-21); NULL = fallback automático de sempre
-    apply_style_guardrails boolean NOT NULL DEFAULT true,  -- checkbox da tela (2026-08-21) -- liga/desliga o rulebook visual interno (ver structure.py)
+    apply_style_guardrails boolean NOT NULL DEFAULT false,  -- checkbox da tela -- liga/desliga o rulebook visual interno (ver structure.py). Default false (invertido em 2026-08-21 (4): padrão é extrair do editorial, sem opinião de estilo nossa; usuário liga explicitamente se quiser o rulebook)
     status varchar NOT NULL DEFAULT 'pending',  -- pending | running | completed | failed
     cost_cents integer NOT NULL DEFAULT 0,
     failure_reason text,
@@ -49,6 +49,13 @@ CREATE INDEX IF NOT EXISTS idx_deck_job_steps_pending
 
 -- Migração manual 2026-08-21 (tarefa 1 — checkbox de guardrail na tela):
 -- ALTER TABLE deck_jobs ADD COLUMN IF NOT EXISTS apply_style_guardrails boolean NOT NULL DEFAULT true;
+
+-- Migração manual 2026-08-21 (4) — inverte o default pra false (decisão do
+-- usuário: guardrail visual é opt-in, não opt-out; achado real que motivou
+-- isso, ver histórico: com o default antigo (true) e o campo não chegando
+-- corretamente do frontend, editoriais com paleta clara própria estavam
+-- caindo na validação de fundo escuro sem o usuário ter pedido isso):
+-- ALTER TABLE deck_jobs ALTER COLUMN apply_style_guardrails SET DEFAULT false;
 
 -- Migração manual 2026-08-21 (tarefa 2 — combo de 3 providers travados
 -- ponta a ponta, OpenAI novo, OpenRouter removido do combo):

@@ -166,7 +166,7 @@ def _build_prompt(
     editorial_text: str,
     previous_error: Optional[str] = None,
     *,
-    apply_style_guardrails: bool = True,
+    apply_style_guardrails: bool = False,
 ) -> str:
     """
     `apply_style_guardrails` (2026-08-21, tarefa 1 — checkbox na tela):
@@ -273,7 +273,7 @@ async def generate_deck_structure(
     conn: asyncpg.Connection,
     *,
     preferred_provider: Optional[str] = None,
-    apply_style_guardrails: bool = True,
+    apply_style_guardrails: bool = False,
 ) -> tuple[DeckSpec, int, int]:
     """
     Chama o LLM pra transformar o editorial em `DeckSpec`. Retenta até

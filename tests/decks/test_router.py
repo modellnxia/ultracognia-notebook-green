@@ -40,7 +40,7 @@ class TestCreateDeckJob:
         mock_repo = AsyncMock()
         mock_repo.create_job.return_value = {
             "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
-            "llm_provider": None, "apply_style_guardrails": True,
+            "llm_provider": None, "apply_style_guardrails": False,
         }
         mock_repo.get_steps.return_value = [
             {"step": "structure", "status": "pending", "attempt": 0, "output_ref": None, "error": None}
@@ -61,7 +61,7 @@ class TestCreateDeckJob:
         assert body["status"] == "pending"
         assert body["steps"][0]["step"] == "structure"
         mock_repo.create_job.assert_awaited_once_with(
-            user_id, "editorial colado pelo usuário", None, None, True
+            user_id, "editorial colado pelo usuário", None, None, False
         )
 
     @pytest.mark.asyncio
@@ -71,7 +71,7 @@ class TestCreateDeckJob:
         mock_repo = AsyncMock()
         mock_repo.create_job.return_value = {
             "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
-            "llm_provider": "deepseek", "apply_style_guardrails": True,
+            "llm_provider": "deepseek", "apply_style_guardrails": False,
         }
         mock_repo.get_steps.return_value = []
         with (
@@ -86,7 +86,7 @@ class TestCreateDeckJob:
 
         assert resp.status_code == 201
         assert resp.json()["llm_provider"] == "deepseek"
-        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, "deepseek", True)
+        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, "deepseek", False)
 
     @pytest.mark.asyncio
     async def test_returns_422_for_unknown_llm_provider(self, app):
@@ -136,13 +136,17 @@ class TestCreateDeckJob:
         assert resp.json()["llm_provider"] == "openai"
 
     @pytest.mark.asyncio
-    async def test_apply_style_guardrails_defaults_to_true_in_request(self, app):
+    async def test_apply_style_guardrails_defaults_to_false_in_request(self, app):
+        """
+        Default invertido em 2026-08-21 (4) — ver test_repository.py e
+        HANDOFF_FRONTEND.md seção 3.2 pro achado real que motivou isso.
+        """
         job_id = uuid.uuid4()
         user_id = uuid.uuid4()
         mock_repo = AsyncMock()
         mock_repo.create_job.return_value = {
             "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
-            "llm_provider": None, "apply_style_guardrails": True,
+            "llm_provider": None, "apply_style_guardrails": False,
         }
         mock_repo.get_steps.return_value = []
         with (
@@ -153,8 +157,8 @@ class TestCreateDeckJob:
                 resp = await ac.post("/decks", json={"user_id": str(user_id), "editorial_text": "x"})
 
         assert resp.status_code == 201
-        assert resp.json()["apply_style_guardrails"] is True
-        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, None, True)
+        assert resp.json()["apply_style_guardrails"] is False
+        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, None, False)
 
     @pytest.mark.asyncio
     async def test_passes_apply_style_guardrails_false(self, app):

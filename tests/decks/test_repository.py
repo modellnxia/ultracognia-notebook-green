@@ -71,17 +71,23 @@ class TestCreateJob:
         assert insert_args[-2] is None  # llm_provider
 
     @pytest.mark.asyncio
-    async def test_apply_style_guardrails_defaults_to_true(self):
-        """Checkbox da tela (2026-08-21) — ligado por padrão."""
+    async def test_apply_style_guardrails_defaults_to_false(self):
+        """
+        Checkbox da tela — desligado por padrão (invertido em 2026-08-21 (4):
+        achado real em produção, editorial com paleta própria clara sendo
+        rejeitado mesmo com o checkbox aparentando desligado — o campo não
+        estava chegando, caía no default antigo (true). Default do produto
+        agora é "extrai do editorial, sem opinião de estilo nossa").
+        """
         conn = _mock_transaction_conn()
         job_id, user_id = uuid.uuid4(), uuid.uuid4()
-        conn.fetchrow.return_value = {"id": job_id, "apply_style_guardrails": True}
+        conn.fetchrow.return_value = {"id": job_id, "apply_style_guardrails": False}
         repo = DeckJobRepository(conn)
 
         await repo.create_job(user_id, "texto colado")
 
         insert_args = conn.fetchrow.call_args.args
-        assert insert_args[-1] is True  # apply_style_guardrails é o último parâmetro do INSERT
+        assert insert_args[-1] is False  # apply_style_guardrails é o último parâmetro do INSERT
 
     @pytest.mark.asyncio
     async def test_passes_apply_style_guardrails_false(self):

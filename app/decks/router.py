@@ -39,12 +39,13 @@ class CreateDeckJobRequest(BaseModel):
         ),
     )
     apply_style_guardrails: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "Checkbox da tela (2026-08-21) — ligado (padrão): aplica o rulebook visual interno "
-            "(vocabulário de composição, exemplos de referência, fundo obrigatoriamente escuro). "
-            "Desligado: só o editorial do usuário guia o resultado, sem nenhuma opinião de estilo "
-            "nossa — inclusive paleta clara é aceita se o editorial pedir."
+            "Checkbox da tela — desligado (padrão, decisão do usuário em 2026-08-21): só o editorial "
+            "guia o resultado, extraído pro nosso schema de JSON e mandado pro agente sem nenhuma "
+            "opinião de estilo nossa — inclusive paleta clara é aceita se o editorial pedir. Ligado: "
+            "aplica o rulebook visual interno (vocabulário de composição, exemplos de referência, "
+            "fundo obrigatoriamente escuro) — só quando o usuário marcar explicitamente."
         ),
     )
 
@@ -63,7 +64,7 @@ class DeckJobStatusResponse(BaseModel):
     cost_cents: int
     created_at: datetime
     llm_provider: Optional[str] = None
-    apply_style_guardrails: bool = True
+    apply_style_guardrails: bool = False
     steps: list[StepStatus]
 
 
@@ -75,7 +76,7 @@ class DeckJobSummary(BaseModel):
     cost_cents: int
     created_at: datetime
     llm_provider: Optional[str] = None
-    apply_style_guardrails: bool = True
+    apply_style_guardrails: bool = False
     editorial_preview: str = Field(description="Primeiros ~80 caracteres do editorial, truncado no banco.")
 
 

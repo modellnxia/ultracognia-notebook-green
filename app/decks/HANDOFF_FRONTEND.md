@@ -34,7 +34,7 @@ Autenticação: header `x-api-key` em todas as chamadas (case-insensitive, mas o
   "editorial_text": "texto completo colado pelo usuário no chat...",  // obrigatório, min 1 char
   "client_id": null,   // uuid opcional — reservado pra white-label (tema por cliente), ainda não usado por nenhum agente
   "llm_provider": null,   // "gemini" | "deepseek" | "openai" | omitir/null. Ver seção 3.1 (openrouter removido do combo em 2026-08-21)
-  "apply_style_guardrails": true   // novo, 2026-08-21 — checkbox na tela. Ver seção 3.2
+  "apply_style_guardrails": false   // checkbox na tela. Ver seção 3.2 — ⚠️ default FALSE (invertido em 2026-08-21)
 }
 ```
 
@@ -46,7 +46,7 @@ Autenticação: header `x-api-key` em todas as chamadas (case-insensitive, mas o
   "cost_cents": 0,
   "created_at": "2026-08-20T10:00:00Z",
   "llm_provider": null,
-  "apply_style_guardrails": true,
+  "apply_style_guardrails": false,
   "steps": [
     {"step": "structure", "status": "pending", "attempt": 0, "output_ref": null, "error": null},
     {"step": "assets",    "status": "pending", "attempt": 0, "output_ref": null, "error": null},
@@ -71,14 +71,16 @@ Combo final: `gemini` | `deepseek` | `openai` | automático (omitir campo/`null`
 - Valor explícito e ele falhar → o job vai pra `failed` (não cai silenciosamente pra outro — de propósito, pra vocês conseguirem comparar de verdade qual provider entrega o quê).
 - A resposta (`GET /decks/{id}` e cada item de `GET /decks`) mostra qual `llm_provider` foi usado — útil pra exibir um selo tipo "Gerado com: DeepSeek" na lista/no card do deck.
 
-### 3.2. Checkbox de guardrail visual (`apply_style_guardrails`) — novo em 2026-08-21
+### 3.2. Checkbox de guardrail visual (`apply_style_guardrails`) — ⚠️ default invertido em 2026-08-21 (2)
 
-Controla se o "rulebook" visual interno (vocabulário de composição — posição de ilustração, estilo de painel, etc. — mais o piso de qualidade/densidade que a gente aplica) entra na geração ou não:
+Controla se o "rulebook" visual interno (vocabulário de composição — posição de ilustração, estilo de painel, etc. — mais o piso de qualidade/densidade que a gente aplica) entra na geração ou não.
 
-- **`true`** (default, se omitir o campo) — comportamento atual: o rulebook entra, fundo do slide é obrigatoriamente escuro (validado automaticamente).
-- **`false`** — geração livre, só o editorial do usuário guia o resultado, sem nenhuma opinião de estilo nossa — inclusive aceita paleta clara se o editorial pedir uma.
+⚠️ **Se a tela já tinha isso implementado com o checkbox começando MARCADO, precisa trocar pra começar DESMARCADO** — o default virou `false` (decisão do usuário, 2026-08-21): achado real em produção, um job com o checkbox aparentando desligado ainda assim aplicou o guardrail (o editorial tinha paleta clara própria e foi rejeitado pela validação de fundo escuro) — o mais provável é o campo não estar sendo enviado ainda nesse ponto, caindo no default antigo (`true`). Efeito colateral (fora do nosso alcance verificar daqui): se o toggle da tela estiver com a lógica invertida (marcado = manda `false`, ou vice-versa), isso continua dando o mesmo sintoma mesmo com o default do backend corrigido — vale conferir o wiring do componente.
 
-Sugestão de UI: um toggle/checkbox simples, talvez com um tooltip tipo "Aplicar padrão visual da Ultracognia" (ligado) vs. "Deixar a IA decidir o estilo livremente" (desligado) — texto exato fica a critério de vocês, é só pra dar a ideia do que a opção faz.
+- **`false`** (default — se omitir o campo, vale isso) — o editorial do usuário é extraído direto pro nosso schema de JSON e mandado pro agente, sem nenhuma opinião de estilo nossa — inclusive paleta clara é aceita se o editorial pedir uma. É o comportamento padrão agora.
+- **`true`** — só quando o usuário MARCAR explicitamente: o rulebook interno entra (vocabulário de composição, exemplos de referência), fundo do slide é obrigatoriamente escuro (validado automaticamente).
+
+Sugestão de UI: um toggle/checkbox simples, **começando desmarcado**, com um tooltip tipo "Aplicar padrão visual da Ultracognia" — texto exato fica a critério de vocês, é só pra dar a ideia do que a opção faz quando marcada.
 
 ### `GET /decks/{job_id}` — consulta status (pra fazer polling)
 
