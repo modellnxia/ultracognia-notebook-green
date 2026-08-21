@@ -102,14 +102,20 @@
   .two-column__wrap { display: flex; gap: 40px; margin-top: 24px; flex: 1; }
   .two-column__col { flex: 1; }
 
-  /* ── infographic (2026-08-19): eyebrow + título + subtítulo + ilustração
-     hero + painéis + citação — o padrão denso dos exemplos de referência
-     do usuário (few-shot, ver structure.py) ── */
+  /* ── infographic (2026-08-19, composição por peças desde 2026-08-21):
+     eyebrow + título + subtítulo + ilustração hero + painéis + citação — o
+     padrão denso dos exemplos de referência do usuário (few-shot, ver
+     structure.py / FEWSHOT_RULEBOOK.md). Cada peça abaixo tem uma variação
+     visual fechada (guardrail "criativo com margem") escolhida pela IA por
+     slide via `slide.illustration_position` / `eyebrow_style` / `panel_style`
+     / `arrangement` / `citation_style` — todas opcionais; sem nenhuma
+     preenchida, cai no visual padrão de sempre (retrocompatível). ── */
   .slide--infographic {
     padding: 36px 56px 26px;
   }
   .slide__eyebrow {
     display: inline-block;
+    align-self: flex-start;
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 1px;
@@ -120,21 +126,127 @@
     padding: 4px 10px;
     margin-bottom: 10px;
   }
-  .slide--infographic .slide__title { font-size: 28px; margin-bottom: 4px; }
-  .slide__subtitle { font-size: 15px; line-height: 1.4; opacity: 0.85; max-width: 900px; }
-  .slide__subtitle p { margin: 0; }
-  .slide--infographic .asset-image,
-  .slide--infographic .asset-placeholder {
-    margin: 12px 0;
+  /* peça: eyebrow_style — void-frame chanfrado (família dourada) é o padrão
+     acima; pill-left/pill-center são as variações ciano/glow (família azul) */
+  .slide__eyebrow--pill-left { border-radius: 999px; }
+  .slide__eyebrow--pill-center {
+    align-self: center;
+    border-radius: 999px;
+    box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent) 60%, transparent);
   }
 
+  .slide--infographic .slide__title { font-size: 28px; margin-bottom: 4px; }
+  .slide__subtitle { font-size: 15px; line-height: 1.4; opacity: 0.85; }
+  .slide__subtitle p { margin: 0; }
+
+  /* peça: illustration_position — o frame divide o slide em mídia + conteúdo.
+     "left" (padrão) e "right" só trocam o lado via row-reverse (a ordem no
+     HTML nunca muda — mídia sempre vem primeiro no markup, ver template
+     abaixo); "background" empilha a mídia atrás com a caixa de conteúdo
+     flutuando por cima; "none" simplesmente não renderiza a mídia. */
+  .infographic__frame {
+    display: flex;
+    gap: 28px;
+    flex: 1;
+    min-height: 0;
+    align-items: stretch;
+  }
+  .infographic__media { flex: 0 0 42%; display: flex; min-height: 0; }
+  .infographic__media .asset-image,
+  .infographic__media .asset-placeholder {
+    flex: 1;
+    margin: 0;
+    height: 100%;
+  }
+  .infographic__content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .infographic__content .panels-grid,
+  .infographic__content .slide__citation { margin-top: auto; }
+
+  .slide--infographic.illustration--right .infographic__frame { flex-direction: row-reverse; }
+
+  .slide--infographic.illustration--background .infographic__frame { position: relative; }
+  .slide--infographic.illustration--background .infographic__media {
+    position: absolute;
+    inset: 0;
+    flex: 1;
+    z-index: 0;
+  }
+  .slide--infographic.illustration--background .infographic__media .asset-image { object-fit: cover; }
+  .slide--infographic.illustration--background .infographic__content {
+    position: relative;
+    z-index: 1;
+    margin: auto;
+    max-width: 80%;
+    align-items: center;
+    text-align: center;
+    background: color-mix(in srgb, var(--color-background) 55%, transparent);
+    border-radius: 10px;
+    padding: 24px 40px;
+  }
+  .slide--infographic.illustration--none .infographic__media { display: none; }
+
   .panels-grid { display: flex; gap: 14px; }
+  /* peça: arrangement */
+  .panels-grid--stacked { flex-direction: column; }
+  .panels-grid--comparison-columns { gap: 0; }
+  .panels-grid--comparison-columns .panel-card:not(:last-child) {
+    border-right: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+    margin-right: 14px;
+    padding-right: 14px;
+  }
+  .panels-grid--sequence-numbered, .panels-grid--sequence-lettered { counter-reset: panel-seq; }
+  .panels-grid--sequence-numbered .panel-card,
+  .panels-grid--sequence-lettered .panel-card {
+    counter-increment: panel-seq;
+    position: relative;
+    padding-top: 28px;
+  }
+  .panels-grid--sequence-numbered .panel-card::before,
+  .panels-grid--sequence-lettered .panel-card::before {
+    position: absolute;
+    top: 8px;
+    left: 10px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1px solid var(--color-accent);
+    color: var(--color-accent);
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .panels-grid--sequence-numbered .panel-card::before { content: counter(panel-seq); }
+  .panels-grid--sequence-lettered .panel-card::before { content: counter(panel-seq, upper-alpha); }
+
   .panel-card {
     flex: 1;
     background: color-mix(in srgb, var(--color-text) 5%, transparent);
     border-left: 3px solid var(--color-accent);
     border-radius: 4px;
     padding: 10px 14px;
+  }
+  /* peça: panel_style — bordered-card acima é o padrão; as duas abaixo são
+     as outras variações fechadas do vocabulário (ver FEWSHOT_RULEBOOK.md) */
+  .panel-card--void-frame {
+    background: transparent;
+    border: 1px solid var(--color-accent);
+    border-left: 1px solid var(--color-accent);
+    border-radius: 2px;
+    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  }
+  .panel-card--borderless-icon {
+    background: transparent;
+    border: none;
+    border-left: none;
+    padding-left: 0;
   }
   .panel-card__heading { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; }
   .panel-card__text { font-size: 12px; line-height: 1.4; opacity: 0.85; }
@@ -146,6 +258,17 @@
     font-style: italic;
     font-size: 11px;
     opacity: 0.7;
+  }
+  /* peça: citation_style — bar-circuit-corners acima é o padrão */
+  .slide__citation--bordered-card {
+    border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+    border-radius: 8px;
+    padding: 10px 14px;
+  }
+  .slide__citation--split-two {
+    border-left: 3px solid var(--color-accent);
+    border-top: none;
+    padding: 6px 0 6px 14px;
   }
 
   .slide__notes { display: none; } /* notas do apresentador não aparecem no HTML visual */
@@ -159,7 +282,7 @@
 <body>
 
 {% for slide in deck.slides %}
-<section class="slide slide--{{ slide.layout.value }}" id="{{ slide.id }}">
+<section class="slide slide--{{ slide.layout.value }}{% if slide.layout.value == 'infographic' %} illustration--{{ slide.illustration_position or 'left' }}{% endif %}" id="{{ slide.id }}">
   {% if deck.theme.logo_url %}<img class="slide__logo" src="{{ deck.theme.logo_url }}" alt="logo">{% endif %}
 
   {% if slide.layout.value == "two-column" %}
@@ -171,20 +294,29 @@
     </div>
 
   {% elif slide.layout.value == "infographic" %}
-    {% if slide.eyebrow %}<div class="slide__eyebrow">{{ slide.eyebrow }}</div>{% endif %}
-    <h1 class="slide__title">{{ slide.title }}</h1>
-    <div class="slide__subtitle">
-      {% for block in slide.body if block.type != "panels" %}{{ render_block(block) }}{% endfor %}
-    </div>
-    {% if slide.asset %}
-      {% if slide.asset.ref.startswith("http") %}
-        <img class="asset-image" src="{{ slide.asset.ref }}" alt="{{ slide.title }}">
-      {% else %}
-        <div class="asset-placeholder">[{{ slide.asset.kind }}: {{ slide.asset.ref }}]</div>
+    {% set illu = slide.illustration_position or "left" %}
+    {% set eyebrow_cls = "slide__eyebrow--" ~ slide.eyebrow_style if slide.eyebrow_style and slide.eyebrow_style != "none" else "" %}
+    {% set citation_cls = "slide__citation--" ~ slide.citation_style if slide.citation_style and slide.citation_style != "bar-circuit-corners" else "" %}
+    <div class="infographic__frame">
+      {% if illu != "none" and slide.asset %}
+        <div class="infographic__media">
+          {% if slide.asset.ref.startswith("http") %}
+            <img class="asset-image" src="{{ slide.asset.ref }}" alt="{{ slide.title }}">
+          {% else %}
+            <div class="asset-placeholder">[{{ slide.asset.kind }}: {{ slide.asset.ref }}]</div>
+          {% endif %}
+        </div>
       {% endif %}
-    {% endif %}
-    {% for block in slide.body if block.type == "panels" %}{{ render_block(block) }}{% endfor %}
-    {% if slide.citation %}<div class="slide__citation">{{ slide.citation }}</div>{% endif %}
+      <div class="infographic__content">
+        {% if slide.eyebrow and slide.eyebrow_style != "none" %}<div class="slide__eyebrow{% if eyebrow_cls %} {{ eyebrow_cls }}{% endif %}">{{ slide.eyebrow }}</div>{% endif %}
+        <h1 class="slide__title">{{ slide.title }}</h1>
+        <div class="slide__subtitle">
+          {% for block in slide.body if block.type != "panels" %}{{ render_block(block) }}{% endfor %}
+        </div>
+        {% for block in slide.body if block.type == "panels" %}{{ render_block(block, panel_style=slide.panel_style, arrangement=slide.arrangement) }}{% endfor %}
+        {% if slide.citation %}<div class="slide__citation{% if citation_cls %} {{ citation_cls }}{% endif %}">{{ slide.citation }}</div>{% endif %}
+      </div>
+    </div>
 
   {% elif slide.layout.value == "diagram-full" %}
     <h1 class="slide__title">{{ slide.title }}</h1>

@@ -72,6 +72,23 @@ _LAYOUT_GUIDE = """Layouts disponíveis — escolha o mais adequado pra cada sli
 - closing: slide de encerramento.
 - infographic: o padrão visual denso das imagens de referência anexadas a esta chamada — eyebrow (etiqueta de categoria) + título + subtítulo curto + UMA ilustração hero + 2 a 4 painéis estruturados (bloco "panels", cada painel com heading curto + texto curto) + citação de rodapé (framework/fonte). Use esse layout pra qualquer slide que apresente um conceito/argumento de negócio com peso — é o layout PADRÃO pra conteúdo analítico/estratégico, não uma exceção."""
 
+# Rulebook compacto (2026-08-21) — destilado de 59 exemplos de referência
+# reais catalogados um a um (ver FEWSHOT_ANALYSIS_METHOD.md e
+# FEWSHOT_CATALOG_SHOT{1,2,3}.md — não vão pro prompt, só o resumo abaixo).
+# Guardrail de dois níveis: as PEÇAS abaixo são um vocabulário fechado — a IA
+# pode COMPOR uma combinação nova (nunca vista literalmente nos 59
+# exemplos), mas só usando peças desta lista, nunca inventando uma peça
+# nova. Isso é o que dá liberdade criativa real sem perder a identidade
+# visual dos exemplos.
+_COMPOSITION_GUIDE = """Peças de composição do layout "infographic" — pra cada slide "infographic", escolha (você decide, não precisa ser sempre a mesma combinação em todo slide):
+- illustration_position: "left" (padrão mais comum) | "right" (inverte o lado — varie ao longo do deck, não deixe tudo do mesmo lado) | "background" (ilustração ocupa o slide inteiro, atrás do conteúdo centralizado — reserve pra slides de transição/fechamento com pouco texto) | "none" (sem ilustração — só quando o conteúdo já é denso o bastante em texto/painéis).
+- eyebrow_style: "chamfered-left" | "pill-left" | "pill-center" (reserve pra quando illustration_position="background") | "none".
+- panel_style: "void-frame" (moldura vazada, sem fundo) | "bordered-card" (fundo sutil + borda, o mais comum) | "borderless-icon" (sem moldura nenhuma).
+- arrangement: "row" (fileira única, padrão) | "stacked" (empilhado verticalmente) | "comparison-columns" (pra comparar 2 opções/estados lado a lado) | "sequence-numbered" (passos 1-2-3) | "sequence-lettered" (passos A-B-C).
+- citation_style: "bar-circuit-corners" (padrão) | "bordered-card" | "split-two".
+
+Cada campo é INDEPENDENTE dos outros — combine livremente. Não repita sempre a mesma combinação em todos os slides do deck; varie de acordo com o que cada conteúdo pede (ex.: um slide de comparação pede arrangement="comparison-columns"; um slide de processo em etapas pede "sequence-numbered"). Se não tiver certeza, pode deixar um campo de fora (fica com o padrão) — mas evite deixar TODOS de fora em todos os slides, isso é o comportamento antigo que a gente está deixando pra trás."""
+
 
 def _build_prompt(editorial_text: str, previous_error: Optional[str] = None) -> str:
     schema = json.dumps(DeckSpec.model_json_schema(), ensure_ascii=False)
@@ -85,17 +102,20 @@ def _build_prompt(editorial_text: str, previous_error: Optional[str] = None) -> 
 
 {_FEWSHOT_DESCRIPTION}
 
-Replique esse vocabulário visual sempre que o conteúdo do editorial pedir tratamento denso/analítico (layout "infographic", ver abaixo) — a paleta e o estilo de ilustração podem variar por deck (é você quem decide em `theme`), mas a ESTRUTURA da composição (eyebrow + título + subtítulo + ilustração + painéis + citação) deve seguir o padrão descrito.
+Replique esse vocabulário visual sempre que o conteúdo do editorial pedir tratamento denso/analítico (layout "infographic", ver abaixo) — a ESTRUTURA da composição (eyebrow + título + subtítulo + ilustração + painéis + citação) segue o padrão descrito, mas você tem liberdade real de COMPOSIÇÃO dentro dele (ver peças abaixo) — não precisa (nem deve) repetir sempre a mesma combinação.
 
 {_LAYOUT_GUIDE}
+
+{_COMPOSITION_GUIDE}
 
 Regras:
 - Separe o editorial em slides, na ordem em que aparecem no texto.
 - Para cada slide, escolha o layout mais adequado ao conteúdo — prefira "infographic" pra conteúdo analítico/estratégico (é o padrão nos exemplos anexados), reserve os outros layouts pra abertura, transição, comparação simples e encerramento.
-- Ilustração é PADRÃO, não opcional: praticamente todo slide "infographic" ou "diagram-full" deve ter um bloco "asset" com kind="image" (descrição rica da ilustração: composição, metáfora visual pro conceito do slide, estilo — ex.: "ilustração isométrica técnica de uma sala de servidores com tubulações douradas representando fluxo de dados") ou kind="diagram" (sintaxe Mermaid) quando o conteúdo for um fluxo/processo.
+- Ilustração é o comportamento padrão (todos os exemplos de referência têm alguma), mas não é regra técnica obrigatória: se um slide específico do editorial for genuinamente mais denso em texto/dados e não pedir imagem, pode usar illustration_position="none" ou simplesmente omitir "asset" — decida pelo conteúdo, não por hábito. Quando incluir, escreva uma descrição rica (composição, metáfora visual pro conceito do slide, estilo) em "asset" com kind="image", ou kind="diagram" (sintaxe Mermaid) quando o conteúdo for um fluxo/processo.
 - Quando usar o layout "infographic": preencha "eyebrow" (categoria curta, ex.: "Gestão de Capital Humano | Retenção"), o primeiro bloco do "body" deve ser um parágrafo curto (subtítulo), e inclua um bloco "panels" com 2 a 4 painéis (cada um com heading curto + texto curto) resumindo os pontos-chave. Preencha "citation" com uma referência plausível a um framework/teoria de negócio real, no mesmo espírito dos exemplos (não precisa ser literal, mas precisa soar como uma citação real de gestão/economia/estratégia).
 - Se o editorial descrever um fluxo, processo, arquitetura ou relação entre etapas que fique mais claro como diagrama do que como texto, inclua um bloco "asset" com kind="diagram" e ref = a definição desse diagrama em sintaxe Mermaid válida (ex.: "flowchart LR\\nA[Início] --> B[Meio] --> C[Fim]"), usando sempre um tipo simples de diagrama (flowchart ou sequenceDiagram) — nunca invente sintaxe fora do Mermaid.
 - Escolha UMA paleta de cores (theme.palette, hexadecimal, com bom contraste texto/fundo) e UMA fonte (theme.font_stack) pro deck inteiro, coerentes com o tom do conteúdo — e mantenha essa mesma identidade visual em todas as descrições de ilustração que você escrever (mesma paleta/estilo mencionados em cada prompt de imagem), pra o deck inteiro parecer um conjunto único, não slides desconexos.
+- `theme.palette.background` PRECISA ser um tom ESCURO (navy, petróleo, grafite, verde ou bordô bem escuros etc.) — nenhum dos exemplos de referência reais tem fundo claro/branco. Você escolhe livremente QUAL tom escuro combina com o tema do conteúdo (não precisa ser sempre o mesmo azul-marinho) — só não pode ser um tom claro. Isso é validado automaticamente; um fundo claro é rejeitado e você recebe o erro de volta pra corrigir.
 - Responda APENAS com JSON válido, sem markdown, sem texto fora do JSON, seguindo este schema exatamente:
 
 {schema}

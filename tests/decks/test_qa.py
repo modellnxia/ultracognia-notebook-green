@@ -22,12 +22,16 @@ from app.decks.models import (
 
 
 def _theme(**overrides) -> Theme:
-    defaults = {"primary": "#0F172A", "background": "#FFFFFF", "text": "#111111"}
+    defaults = {"primary": "#0F172A", "background": "#0D1B2E", "text": "#F2F2F2"}
     defaults.update(overrides)
     return Theme(palette=defaults, font_stack="Inter, sans-serif")
 
 
 class TestContrastRatio:
+    # Testes da função pura `_contrast_ratio` — não passam por `Theme`
+    # (que hoje exige fundo escuro, ver TestThemeBackgroundMustBeDark em
+    # test_models.py), então branco puro aqui é só um par de cores qualquer
+    # usado pra provar a fórmula, sem nenhuma relação com aquela regra.
     def test_black_on_white_is_maximum_contrast(self):
         ratio = qa._contrast_ratio("#000000", "#FFFFFF")
         assert ratio == pytest.approx(21.0, rel=0.01)
@@ -44,12 +48,14 @@ class TestContrastRatio:
 
 class TestCheckContrast:
     def test_no_issues_for_high_contrast_theme(self):
-        theme = _theme(primary="#000000", background="#FFFFFF", text="#111111")
+        # fundo escuro + texto quase branco = contraste máximo, mesma
+        # intenção do teste de sempre, só invertendo qual ponta é clara.
+        theme = _theme(primary="#FFFFFF", background="#0A0A0D", text="#F5F5F5")
         issues = qa._check_contrast(theme)
         assert issues == []
 
     def test_flags_low_contrast_text_on_background(self):
-        theme = _theme(text="#EEEEEE", background="#FFFFFF")  # quase branco no branco
+        theme = _theme(text="#15243A", background="#0D1B2E")  # texto quase da cor do fundo
         issues = qa._check_contrast(theme)
         assert any(i["kind"] == "low_contrast" and "text" in i["message"] for i in issues)
 
@@ -130,7 +136,7 @@ class TestCheckDeck:
     @pytest.mark.asyncio
     async def test_aggregates_all_three_kinds_of_issue(self):
         deck = DeckSpec(
-            theme=_theme(text="#FEFEFE", background="#FFFFFF"),  # baixo contraste de propósito
+            theme=_theme(text="#132132", background="#0D1B2E"),  # baixo contraste de propósito (texto quase da cor do fundo)
             slides=[
                 Slide(
                     layout=LayoutId.DIAGRAM_FULL,

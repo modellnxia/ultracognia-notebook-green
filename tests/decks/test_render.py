@@ -20,7 +20,7 @@ from app.decks.render import render_deck_html
 
 def _theme(**overrides) -> Theme:
     defaults = dict(
-        palette={"primary": "#123456", "background": "#FFFFFF", "text": "#111111"},
+        palette={"primary": "#123456", "background": "#0D1B2E", "text": "#F2F2F2"},
         font_stack="Inter, sans-serif",
     )
     defaults.update(overrides)
@@ -35,8 +35,8 @@ class TestThemeInjection:
         )
         html = render_deck_html(deck)
         assert "--color-primary: #123456;" in html
-        assert "--color-background: #FFFFFF;" in html
-        assert "--color-text: #111111;" in html
+        assert "--color-background: #0D1B2E;" in html
+        assert "--color-text: #F2F2F2;" in html
         assert "--font-stack: Inter, sans-serif;" in html
 
     def test_logo_rendered_when_present(self):
@@ -233,15 +233,116 @@ class TestInfographicLayout:
         assert "Painel 1" in html
         assert "Texto do painel 1" in html
 
-    def test_subtitle_comes_before_asset_which_comes_before_panels(self):
+    def test_default_illustration_position_puts_media_before_content_in_dom(self):
+        # 2026-08-21: "left" é o padrão (illustration_position=None) — a
+        # mídia vem ANTES do conteúdo no HTML (visualmente à esquerda), não
+        # mais "no meio" da coluna de texto como era antes desta mudança.
         deck = self._infographic_deck(
             asset=SlideAsset(kind="image", ref="https://x.supabase.co/sign/foo.png"),
         )
         html = render_deck_html(deck)
-        subtitle_pos = html.index("Subtítulo de contexto")
         asset_pos = html.index('<img class="asset-image"')
+        subtitle_pos = html.index("Subtítulo de contexto")
         panels_pos = html.index("class='panels-grid'")
-        assert subtitle_pos < asset_pos < panels_pos
+        assert asset_pos < subtitle_pos < panels_pos
+
+    def test_subtitle_still_comes_before_panels_when_no_asset(self):
+        html = render_deck_html(self._infographic_deck())
+        subtitle_pos = html.index("Subtítulo de contexto")
+        panels_pos = html.index("class='panels-grid'")
+        assert subtitle_pos < panels_pos
+
+
+class TestIllustrationPosition:
+    """Peça `illustration_position` (2026-08-21) — ver FEWSHOT_RULEBOOK.md."""
+
+    def _deck_with_asset(self, **slide_kwargs) -> DeckSpec:
+        defaults = dict(
+            layout=LayoutId.INFOGRAPHIC,
+            title="X",
+            asset=SlideAsset(kind="image", ref="https://x.supabase.co/sign/foo.png"),
+        )
+        defaults.update(slide_kwargs)
+        return DeckSpec(theme=_theme(), slides=[Slide(**defaults)])
+
+    def test_left_is_the_default_and_puts_media_first_in_markup(self):
+        html = render_deck_html(self._deck_with_asset())
+        assert "illustration--left" in html
+        media_pos = html.index('class="infographic__media"')
+        content_pos = html.index('class="infographic__content"')
+        assert media_pos < content_pos
+
+    def test_right_sets_the_modifier_class(self):
+        html = render_deck_html(self._deck_with_asset(illustration_position="right"))
+        assert "illustration--right" in html
+
+    def test_background_sets_the_modifier_class(self):
+        html = render_deck_html(self._deck_with_asset(illustration_position="background"))
+        assert "illustration--background" in html
+
+    def test_none_omits_the_media_element_even_with_asset_present(self):
+        html = render_deck_html(self._deck_with_asset(illustration_position="none"))
+        assert "illustration--none" in html
+        assert 'class="infographic__media"' not in html
+        assert '<img class="asset-image"' not in html
+
+
+class TestEyebrowStyle:
+    def _deck(self, **slide_kwargs) -> DeckSpec:
+        defaults = dict(layout=LayoutId.INFOGRAPHIC, title="X", eyebrow="Categoria")
+        defaults.update(slide_kwargs)
+        return DeckSpec(theme=_theme(), slides=[Slide(**defaults)])
+
+    def test_pill_left_adds_modifier_class(self):
+        html = render_deck_html(self._deck(eyebrow_style="pill-left"))
+        assert 'class="slide__eyebrow slide__eyebrow--pill-left"' in html
+
+    def test_none_style_hides_eyebrow_even_when_text_present(self):
+        html = render_deck_html(self._deck(eyebrow_style="none"))
+        assert '<div class="slide__eyebrow' not in html
+
+
+class TestPanelAndArrangementStyle:
+    def _deck(self, **slide_kwargs) -> DeckSpec:
+        defaults = dict(
+            layout=LayoutId.INFOGRAPHIC,
+            title="X",
+            body=[
+                PanelListBlock(
+                    panels=[Panel(heading="H1", text="T1"), Panel(heading="H2", text="T2")]
+                )
+            ],
+        )
+        defaults.update(slide_kwargs)
+        return DeckSpec(theme=_theme(), slides=[Slide(**defaults)])
+
+    def test_panel_style_adds_modifier_class_to_each_card(self):
+        html = render_deck_html(self._deck(panel_style="void-frame"))
+        assert html.count("class='panel-card panel-card--void-frame'") == 2
+
+    def test_arrangement_adds_modifier_class_to_grid(self):
+        html = render_deck_html(self._deck(arrangement="sequence-numbered"))
+        assert "class='panels-grid panels-grid--sequence-numbered'" in html
+
+    def test_no_style_or_arrangement_keeps_bare_classes(self):
+        html = render_deck_html(self._deck())
+        assert "class='panel-card'" in html
+        assert "class='panels-grid'" in html
+
+
+class TestCitationStyle:
+    def _deck(self, **slide_kwargs) -> DeckSpec:
+        defaults = dict(layout=LayoutId.INFOGRAPHIC, title="X", citation="Fonte X")
+        defaults.update(slide_kwargs)
+        return DeckSpec(theme=_theme(), slides=[Slide(**defaults)])
+
+    def test_bordered_card_adds_modifier_class(self):
+        html = render_deck_html(self._deck(citation_style="bordered-card"))
+        assert 'class="slide__citation slide__citation--bordered-card"' in html
+
+    def test_default_style_keeps_bare_class(self):
+        html = render_deck_html(self._deck())
+        assert '<div class="slide__citation">Fonte X</div>' in html
 
 
 class TestMultipleSlides:

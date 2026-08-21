@@ -15,7 +15,7 @@ from app.decks.models import (
 
 def _valid_theme() -> Theme:
     return Theme(
-        palette={"primary": "#1A2B3C", "background": "#FFFFFF", "text": "#111111"},
+        palette={"primary": "#1A2B3C", "background": "#0D1B2E", "text": "#F2F2F2"},
         font_stack="Inter, system-ui, sans-serif",
     )
 
@@ -67,10 +67,43 @@ class TestBulletListBlock:
 class TestThemePalette:
     @pytest.mark.parametrize("missing", ["primary", "background", "text"])
     def test_rejects_missing_required_role(self, missing):
-        palette = {"primary": "#000", "background": "#fff", "text": "#111"}
+        palette = {"primary": "#000", "background": "#0D1B2E", "text": "#111"}
         del palette[missing]
         with pytest.raises(ValidationError):
             Theme(palette=palette, font_stack="Inter")
+
+
+class TestThemeBackgroundMustBeDark:
+    """Guardrail 2026-08-21 — ver FEWSHOT_RULEBOOK.md: nenhum dos 59 exemplos
+    de referência tem fundo principal claro, então isso é validado de
+    verdade, não só pedido no prompt (fecha o bug de fundo quase-branco)."""
+
+    @pytest.mark.parametrize("background", ["#FFFFFF", "#F5F5F5", "#EEEEEE", "#fff"])
+    def test_rejects_light_backgrounds(self, background):
+        with pytest.raises(ValidationError, match="claro demais"):
+            Theme(
+                palette={"primary": "#1A2B3C", "background": background, "text": "#111111"},
+                font_stack="Inter",
+            )
+
+    @pytest.mark.parametrize(
+        "background", ["#0D1B2E", "#0A0A0D", "#141F2E", "#1a0e0e", "#0f2418"]
+    )
+    def test_accepts_a_range_of_dark_hues(self, background):
+        # a IA continua livre pra escolher QUALQUER matiz escuro — não é 1
+        # cor fixa, é uma faixa de luminância (ver models.py).
+        theme = Theme(
+            palette={"primary": "#1A2B3C", "background": background, "text": "#F2F2F2"},
+            font_stack="Inter",
+        )
+        assert theme.palette["background"] == background
+
+    def test_rejects_invalid_hex(self):
+        with pytest.raises(ValidationError, match="não é um hex válido"):
+            Theme(
+                palette={"primary": "#1A2B3C", "background": "not-a-color", "text": "#111"},
+                font_stack="Inter",
+            )
 
 
 class TestPanelListBlock:
@@ -122,3 +155,52 @@ class TestSlideIdUniqueness:
             ],
         )
         assert len(spec.slides) == 2
+
+
+class TestCompositionPieces:
+    """Peças de composição do layout `infographic` (2026-08-21) — vocabulário
+    fechado extraído dos 59 exemplos, ver FEWSHOT_RULEBOOK.md. Todas
+    opcionais/None por padrão (retrocompatibilidade)."""
+
+    def test_all_default_to_none(self):
+        slide = Slide(layout=LayoutId.INFOGRAPHIC, title="X")
+        assert slide.illustration_position is None
+        assert slide.eyebrow_style is None
+        assert slide.panel_style is None
+        assert slide.arrangement is None
+        assert slide.citation_style is None
+
+    @pytest.mark.parametrize("position", ["left", "right", "background", "none"])
+    def test_accepts_documented_illustration_positions(self, position):
+        slide = Slide(layout=LayoutId.INFOGRAPHIC, title="X", illustration_position=position)
+        assert slide.illustration_position == position
+
+    def test_rejects_undocumented_illustration_position(self):
+        with pytest.raises(ValidationError):
+            Slide(layout=LayoutId.INFOGRAPHIC, title="X", illustration_position="floating")
+
+    @pytest.mark.parametrize("style", ["chamfered-left", "pill-left", "pill-center", "none"])
+    def test_accepts_documented_eyebrow_styles(self, style):
+        slide = Slide(layout=LayoutId.INFOGRAPHIC, title="X", eyebrow_style=style)
+        assert slide.eyebrow_style == style
+
+    @pytest.mark.parametrize("style", ["void-frame", "bordered-card", "borderless-icon"])
+    def test_accepts_documented_panel_styles(self, style):
+        slide = Slide(layout=LayoutId.INFOGRAPHIC, title="X", panel_style=style)
+        assert slide.panel_style == style
+
+    def test_rejects_undocumented_panel_style(self):
+        with pytest.raises(ValidationError):
+            Slide(layout=LayoutId.INFOGRAPHIC, title="X", panel_style="glass-morphism")
+
+    @pytest.mark.parametrize(
+        "arrangement", ["stacked", "row", "comparison-columns", "sequence-numbered", "sequence-lettered"]
+    )
+    def test_accepts_documented_arrangements(self, arrangement):
+        slide = Slide(layout=LayoutId.INFOGRAPHIC, title="X", arrangement=arrangement)
+        assert slide.arrangement == arrangement
+
+    @pytest.mark.parametrize("style", ["bar-circuit-corners", "bordered-card", "split-two"])
+    def test_accepts_documented_citation_styles(self, style):
+        slide = Slide(layout=LayoutId.INFOGRAPHIC, title="X", citation_style=style)
+        assert slide.citation_style == style

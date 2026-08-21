@@ -15,7 +15,7 @@ from app.decks.models import DeckSpec, Slide, SlideAsset, LayoutId, Theme
 def _valid_deck() -> DeckSpec:
     return DeckSpec(
         theme=Theme(
-            palette={"primary": "#1A2B3C", "background": "#FFFFFF", "text": "#111111"},
+            palette={"primary": "#1A2B3C", "background": "#0D1B2E", "text": "#F2F2F2"},
             font_stack="Inter, system-ui, sans-serif",
         ),
         slides=[Slide(layout=LayoutId.COVER, title="Capa")],

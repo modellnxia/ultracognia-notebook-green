@@ -34,7 +34,7 @@ from app.decks.pptx_render import render_deck_pptx
 
 def _theme() -> Theme:
     return Theme(
-        palette={"primary": "#123456", "background": "#FFFFFF", "text": "#111111"},
+        palette={"primary": "#123456", "background": "#0D1B2E", "text": "#F2F2F2"},
         font_stack="Arial, sans-serif",
     )
 
@@ -238,3 +238,117 @@ class TestInfographicLayout:
         all_text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
         assert "CATEGORIA" not in all_text
         assert "Teoria X" not in all_text
+
+
+class TestIllustrationPositionPptx:
+    """Peça `illustration_position` (2026-08-21) — ver FEWSHOT_RULEBOOK.md."""
+
+    def _deck_with_asset(self, **slide_kwargs) -> DeckSpec:
+        defaults = dict(
+            layout=LayoutId.INFOGRAPHIC,
+            title="X",
+            asset=SlideAsset(kind="image", ref="https://x.supabase.co/sign/foo.png?token=abc"),
+        )
+        defaults.update(slide_kwargs)
+        return DeckSpec(theme=_theme(), slides=[Slide(**defaults)])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("position", ["left", "right"])
+    async def test_left_and_right_embed_the_image(self, position):
+        deck = self._deck_with_asset(illustration_position=position)
+        with patch("app.decks.pptx_render._fetch_image_bytes", new=AsyncMock(return_value=_TINY_PNG)):
+            pptx_bytes = await render_deck_pptx(deck)
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+        pictures = [sh for sh in slide.shapes if sh.shape_type == 13]
+        assert len(pictures) == 1
+
+    @pytest.mark.asyncio
+    async def test_background_embeds_image_and_a_scrim_shape(self):
+        deck = self._deck_with_asset(illustration_position="background")
+        with patch("app.decks.pptx_render._fetch_image_bytes", new=AsyncMock(return_value=_TINY_PNG)):
+            pptx_bytes = await render_deck_pptx(deck)
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+        pictures = [sh for sh in slide.shapes if sh.shape_type == 13]
+        bars = [sh for sh in slide.shapes if sh.shape_type == 1]  # inclui o scrim + as barras dos painéis (nenhum aqui)
+        assert len(pictures) == 1
+        assert len(bars) >= 1  # pelo menos o retângulo de scrim
+
+    @pytest.mark.asyncio
+    async def test_none_skips_the_image_even_with_asset_present(self):
+        deck = self._deck_with_asset(illustration_position="none")
+        with patch("app.decks.pptx_render._fetch_image_bytes", new=AsyncMock(return_value=_TINY_PNG)):
+            pptx_bytes = await render_deck_pptx(deck)
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+        pictures = [sh for sh in slide.shapes if sh.shape_type == 13]
+        assert len(pictures) == 0
+
+
+class TestPanelAndArrangementStylePptx:
+    def _deck(self, **slide_kwargs) -> DeckSpec:
+        defaults = dict(
+            layout=LayoutId.INFOGRAPHIC,
+            title="X",
+            body=[PanelListBlock(panels=[Panel(heading="H1", text="T1"), Panel(heading="H2", text="T2")])],
+        )
+        defaults.update(slide_kwargs)
+        return DeckSpec(theme=_theme(), slides=[Slide(**defaults)])
+
+    @pytest.mark.asyncio
+    async def test_sequence_numbered_prefixes_headings(self):
+        pptx_bytes = await render_deck_pptx(self._deck(arrangement="sequence-numbered"))
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+        all_text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+        assert "1. H1" in all_text
+        assert "2. H2" in all_text
+
+    @pytest.mark.asyncio
+    async def test_sequence_lettered_prefixes_headings(self):
+        pptx_bytes = await render_deck_pptx(self._deck(arrangement="sequence-lettered"))
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+        all_text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+        assert "A. H1" in all_text
+        assert "B. H2" in all_text
+
+    @pytest.mark.asyncio
+    async def test_borderless_icon_draws_no_accent_bar(self):
+        pptx_bytes = await render_deck_pptx(self._deck(panel_style="borderless-icon"))
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+        bars = [sh for sh in slide.shapes if sh.shape_type == 1]
+        assert len(bars) == 0
+
+    @pytest.mark.asyncio
+    async def test_void_frame_draws_a_box_per_panel_instead_of_a_bar(self):
+        pptx_bytes = await render_deck_pptx(self._deck(panel_style="void-frame"))
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+        boxes = [sh for sh in slide.shapes if sh.shape_type == 1]
+        assert len(boxes) == 2  # 1 moldura por painel, não 1 barrinha
+
+
+class TestCitationStylePptx:
+    def _deck(self, **slide_kwargs) -> DeckSpec:
+        defaults = dict(layout=LayoutId.INFOGRAPHIC, title="X", citation="Fonte X")
+        defaults.update(slide_kwargs)
+        return DeckSpec(theme=_theme(), slides=[Slide(**defaults)])
+
+    @pytest.mark.asyncio
+    async def test_bordered_card_style_still_shows_the_text(self):
+        pptx_bytes = await render_deck_pptx(self._deck(citation_style="bordered-card"))
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+        all_text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+        assert "Fonte X" in all_text
+
+    @pytest.mark.asyncio
+    async def test_split_two_style_still_shows_the_text(self):
+        pptx_bytes = await render_deck_pptx(self._deck(citation_style="split-two"))
+        prs = _reopen(pptx_bytes)
+        slide = list(prs.slides)[0]
+        all_text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+        assert "Fonte X" in all_text

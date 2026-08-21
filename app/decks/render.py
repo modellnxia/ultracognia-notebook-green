@@ -23,8 +23,14 @@ from app.decks.models import Block, DeckSpec
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
-def _render_block(block: Block) -> Markup:
-    """Converte um bloco de conteúdo tipado em HTML. Todo texto de usuário passa por escape()."""
+def _render_block(block: Block, *, panel_style: str | None = None, arrangement: str | None = None) -> Markup:
+    """
+    Converte um bloco de conteúdo tipado em HTML. Todo texto de usuário passa
+    por escape(). `panel_style`/`arrangement` só têm efeito no bloco "panels"
+    (peças de composição do layout `infographic`, 2026-08-21 — ver
+    FEWSHOT_RULEBOOK.md); em todo o resto seguem `None` e não mudam nada — as
+    outras chamadas (two-column, title-bullets etc.) nem passam esses kwargs.
+    """
     if block.type == "heading":
         tag = f"h{min(block.level + 1, 6)}"  # h2..h4 dentro do slide (h1 é o título do slide)
         return Markup(f"<{tag}>{escape(block.text)}</{tag}>")
@@ -41,14 +47,16 @@ def _render_block(block: Block) -> Markup:
         return Markup(f"<blockquote>{escape(block.text)}{cite}</blockquote>")
 
     if block.type == "panels":
+        panel_modifier = f" panel-card--{panel_style}" if panel_style else ""
         cards = "".join(
-            f"<div class='panel-card'>"
+            f"<div class='panel-card{panel_modifier}'>"
             f"<div class='panel-card__heading'>{escape(p.heading)}</div>"
             f"<div class='panel-card__text'>{escape(p.text)}</div>"
             f"</div>"
             for p in block.panels
         )
-        return Markup(f"<div class='panels-grid'>{cards}</div>")
+        grid_modifier = f" panels-grid--{arrangement}" if arrangement else ""
+        return Markup(f"<div class='panels-grid{grid_modifier}'>{cards}</div>")
 
     raise ValueError(f"Tipo de bloco desconhecido: {block.type!r}")
 

@@ -32,6 +32,31 @@ class LayoutId(str, Enum):
     INFOGRAPHIC = "infographic"
 
 
+# Luminância relativa máxima aceita pro papel "background" da paleta — guardrail
+# "criativo com margem" (ver FEWSHOT_RULEBOOK.md): a IA continua livre pra
+# escolher QUALQUER matiz (navy, verde-escuro, bordô, petróleo...), mas um
+# valor claro/branco é rejeitado aqui, estruturalmente, não só "pedido" no
+# texto do prompt. Fecha o bug real de produção (fundo quase-branco) achado
+# em 2026-08-19 — nenhum dos 59 exemplos de referência tem fundo principal
+# claro. 0.25 cobre toda a faixa observada nos exemplos (a maioria fica bem
+# abaixo disso, tipo 0.01-0.05) e ainda deixa cinza-médio de fora.
+_MAX_BACKGROUND_LUMINANCE = 0.25
+
+
+def _relative_luminance(hex_color: str) -> float:
+    """Luminância relativa (sRGB, fórmula WCAG) — 0 = preto, 1 = branco."""
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) == 3:
+        hex_color = "".join(c * 2 for c in hex_color)
+    r, g, b = (int(hex_color[i : i + 2], 16) / 255 for i in (0, 2, 4))
+
+    def _linearize(channel: float) -> float:
+        return channel / 12.92 if channel <= 0.03928 else ((channel + 0.055) / 1.055) ** 2.4
+
+    r, g, b = _linearize(r), _linearize(g), _linearize(b)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
 class Theme(BaseModel):
     """
     Identidade visual de UM deck. Nunca decidida pelo `render` — só consumida
@@ -42,9 +67,10 @@ class Theme(BaseModel):
     palette: dict[str, str] = Field(
         description=(
             "Cores nomeadas por papel semântico, não por slide — ex.: "
-            '{"primary": "#1A2B3C", "background": "#FFFFFF", "text": "#111111", '
+            '{"primary": "#1A2B3C", "background": "#0D1B2E", "text": "#F2F2F2", '
             '"accent": "#FF6B4A"}. Contraste texto/fundo é validado no QA '
-            "(fatia 8), não aqui."
+            "(fatia 8), não aqui. `background` precisa ser um tom escuro — "
+            "ver FEWSHOT_RULEBOOK.md."
         )
     )
     font_stack: str = Field(description='Ex.: "Inter, system-ui, sans-serif"')
@@ -57,6 +83,25 @@ class Theme(BaseModel):
         missing = required - v.keys()
         if missing:
             raise ValueError(f"palette sem papéis obrigatórios: {sorted(missing)}")
+        return v
+
+    @field_validator("palette")
+    @classmethod
+    def background_must_be_dark(cls, v: dict[str, str]) -> dict[str, str]:
+        background = v.get("background")
+        if background is None:
+            return v
+        try:
+            luminance = _relative_luminance(background)
+        except (ValueError, IndexError) as exc:
+            raise ValueError(f'palette["background"] não é um hex válido: {background!r}') from exc
+        if luminance >= _MAX_BACKGROUND_LUMINANCE:
+            raise ValueError(
+                f'palette["background"] = {background!r} é claro demais (luminância '
+                f"{luminance:.2f} ≥ {_MAX_BACKGROUND_LUMINANCE}) — os exemplos de referência "
+                "usam sempre um fundo escuro (navy, petróleo, grafite, bordô-escuro etc.). "
+                "Escolha um tom escuro coerente com o tema do conteúdo, nunca branco/claro."
+            )
         return v
 
 
@@ -119,6 +164,22 @@ class SlideAsset(BaseModel):
     ref: str
 
 
+# ── Peças de composição do layout `infographic` (2026-08-21) ───────────────
+# Vocabulário fechado extraído dos 59 exemplos de referência reais — ver
+# FEWSHOT_RULEBOOK.md pra origem de cada opção. A IA (agente `structure`)
+# escolhe uma COMBINAÇÃO dessas peças por slide; ela pode compor algo que
+# nunca apareceu literalmente em nenhum dos 59 exemplos, mas só usando peças
+# que já existem aqui — nunca inventa um valor fora do Literal (Pydantic
+# rejeita antes de chegar no render). Todos opcionais e `None` por padrão:
+# um slide sem nenhuma peça preenchida cai no visual `infographic` de sempre
+# (retrocompatível com decks/testes anteriores a esta mudança).
+IllustrationPosition = Literal["left", "right", "background", "none"]
+EyebrowStyle = Literal["chamfered-left", "pill-left", "pill-center", "none"]
+PanelStyle = Literal["void-frame", "bordered-card", "borderless-icon"]
+Arrangement = Literal["stacked", "row", "comparison-columns", "sequence-numbered", "sequence-lettered"]
+CitationStyle = Literal["bar-circuit-corners", "bordered-card", "split-two"]
+
+
 class Slide(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     layout: LayoutId
@@ -126,13 +187,28 @@ class Slide(BaseModel):
     body: list[Block] = Field(default_factory=list)
     asset: Optional[SlideAsset] = None
     notes: Optional[str] = None
-    # Os dois abaixo só têm efeito visual no layout `infographic` (2026-08-19)
+    # Os campos abaixo só têm efeito visual no layout `infographic` (2026-08-19)
     # — em outros layouts o render simplesmente ignora, se vierem preenchidos.
     eyebrow: Optional[str] = Field(
         default=None, description='Etiqueta de categoria curta, ex.: "Gestão de Capital Humano | Retenção"'
     )
     citation: Optional[str] = Field(
         default=None, description='Rodapé citando um framework/fonte, ex.: "Teoria dos Jogos — MIT Sloan"'
+    )
+    illustration_position: Optional[IllustrationPosition] = Field(
+        default=None, description="Onde a ilustração do slide fica — ver FEWSHOT_RULEBOOK.md. None = padrão (left)."
+    )
+    eyebrow_style: Optional[EyebrowStyle] = Field(
+        default=None, description="Formato visual do badge de eyebrow. None = padrão (chamfered-left)."
+    )
+    panel_style: Optional[PanelStyle] = Field(
+        default=None, description="Formato visual de cada painel do bloco 'panels'. None = padrão (bordered-card)."
+    )
+    arrangement: Optional[Arrangement] = Field(
+        default=None, description="Como os painéis se organizam no slide. None = padrão (row)."
+    )
+    citation_style: Optional[CitationStyle] = Field(
+        default=None, description="Formato visual da citação de rodapé. None = padrão (bar-circuit-corners)."
     )
 
 

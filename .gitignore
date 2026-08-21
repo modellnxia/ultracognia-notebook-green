@@ -70,3 +70,12 @@ scripts/.railway_token
 
 # Contexto de trabalho local do Claude — não é pra ir pro repositório
 CLAUDE.md
+
+# Catálogo forense dos slides de referência (2026-08-21) — descreve conteúdo
+# de negócio real de terceiro (nomes de pessoas, nome de empresa, métricas)
+# extraído dos PDFs de exemplo fornecidos pelo usuário. Decisão explícita:
+# fica só local, nunca no histórico do git. FEWSHOT_RULEBOOK.md e
+# FEWSHOT_ANALYSIS_METHOD.md (sem conteúdo sensível) continuam versionados.
+app/decks/FEWSHOT_CATALOG_SHOT1.md
+app/decks/FEWSHOT_CATALOG_SHOT2.md
+app/decks/FEWSHOT_CATALOG_SHOT3.md

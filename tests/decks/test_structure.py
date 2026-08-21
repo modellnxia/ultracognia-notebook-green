@@ -20,7 +20,7 @@ from app.decks.models import DeckSpec, LayoutId, Slide, Theme
 def _valid_deck_json() -> str:
     deck = DeckSpec(
         theme=Theme(
-            palette={"primary": "#0F172A", "background": "#FFFFFF", "text": "#111111"},
+            palette={"primary": "#0F172A", "background": "#0D1B2E", "text": "#F2F2F2"},
             font_stack="Inter, sans-serif",
         ),
         slides=[Slide(layout=LayoutId.COVER, title="Capa")],

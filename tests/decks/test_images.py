@@ -28,14 +28,14 @@ class TestGenerateImageDispatch:
         m_gemini.assert_awaited_once_with("prompt")
 
     @pytest.mark.asyncio
-    async def test_routes_to_pollinations_when_configured(self, monkeypatch):
-        monkeypatch.setenv("DECK_IMAGE_PROVIDER", "pollinations")
+    async def test_routes_to_openai_when_configured(self, monkeypatch):
+        monkeypatch.setenv("DECK_IMAGE_PROVIDER", "openai")
         with patch(
-            "app.decks.llm.images._generate_image_pollinations",
-            new=AsyncMock(return_value=(b"x", "image/jpeg")),
-        ) as m_poll:
+            "app.decks.llm.images._generate_image_openai",
+            new=AsyncMock(return_value=(b"x", "image/png")),
+        ) as m_openai:
             await images.generate_image("prompt")
-        m_poll.assert_awaited_once_with("prompt")
+        m_openai.assert_awaited_once_with("prompt")
 
     @pytest.mark.asyncio
     async def test_raises_for_unknown_provider(self, monkeypatch):
@@ -89,32 +89,84 @@ class TestGenerateImageGemini:
                 await images._generate_image_gemini("um gato programando")
 
 
-class TestGenerateImagePollinations:
+class TestGenerateImageOpenai:
+    """
+    Provider ativo desde 2026-08-21, substituindo o Pollinations (ver
+    docstring do módulo) — validado manualmente com chave real antes de
+    entrar em produção (imagem de teste real gerada e conferida à mão).
+    """
+
     @pytest.mark.asyncio
-    async def test_returns_bytes_and_content_type_on_success(self):
+    async def test_raises_when_api_key_missing(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        with pytest.raises(images.ImageGenerationError, match="OPENAI_API_KEY"):
+            await images._generate_image_openai("um gato programando")
+
+    @pytest.mark.asyncio
+    async def test_decodes_b64_image_from_response(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+        raw_bytes = b"\x89PNG\r\n\x1a\nfake-png-bytes"
+        b64 = base64.b64encode(raw_bytes).decode()
+
         fake_response = MagicMock()
         fake_response.raise_for_status = MagicMock()
-        fake_response.headers = {"content-type": "image/jpeg; charset=utf-8"}
-        fake_response.content = b"fake-jpeg-bytes"
+        fake_response.json.return_value = {"data": [{"b64_json": b64}], "output_format": "png"}
         fake_client = _fake_async_client(fake_response)
 
         with patch("app.decks.llm.images.httpx.AsyncClient", return_value=fake_client):
-            image_bytes, mime_type = await images._generate_image_pollinations("um gato programando")
+            image_bytes, mime_type = await images._generate_image_openai("um gato programando")
 
-        assert image_bytes == b"fake-jpeg-bytes"
-        assert mime_type == "image/jpeg"
-        fake_client.get.assert_awaited_once()
-        called_url = fake_client.get.call_args.args[0]
-        assert "um%20gato%20programando" in called_url or "um+gato+programando" in called_url
+        assert image_bytes == raw_bytes
+        assert mime_type == "image/png"
 
     @pytest.mark.asyncio
-    async def test_raises_when_response_is_not_an_image(self):
+    async def test_sends_high_quality_by_default(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+        monkeypatch.delenv("OPENAI_IMAGE_QUALITY", raising=False)
+        monkeypatch.delenv("OPENAI_IMAGE_MODEL", raising=False)
+        raw_bytes = b"fake-bytes"
+        b64 = base64.b64encode(raw_bytes).decode()
+
         fake_response = MagicMock()
         fake_response.raise_for_status = MagicMock()
-        fake_response.headers = {"content-type": "text/html"}
-        fake_response.content = b"<html>erro</html>"
+        fake_response.json.return_value = {"data": [{"b64_json": b64}], "output_format": "png"}
         fake_client = _fake_async_client(fake_response)
 
         with patch("app.decks.llm.images.httpx.AsyncClient", return_value=fake_client):
-            with pytest.raises(images.ImageGenerationError, match="não devolveu uma imagem"):
-                await images._generate_image_pollinations("um gato programando")
+            await images._generate_image_openai("um gato programando")
+
+        sent_json = fake_client.post.call_args.kwargs["json"]
+        assert sent_json["quality"] == "high"
+        assert sent_json["model"] == "gpt-image-1"
+        assert sent_json["prompt"] == "um gato programando"
+
+    @pytest.mark.asyncio
+    async def test_quality_is_configurable_via_env_var(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENAI_IMAGE_QUALITY", "medium")
+        raw_bytes = b"fake-bytes"
+        b64 = base64.b64encode(raw_bytes).decode()
+
+        fake_response = MagicMock()
+        fake_response.raise_for_status = MagicMock()
+        fake_response.json.return_value = {"data": [{"b64_json": b64}], "output_format": "png"}
+        fake_client = _fake_async_client(fake_response)
+
+        with patch("app.decks.llm.images.httpx.AsyncClient", return_value=fake_client):
+            await images._generate_image_openai("prompt")
+
+        assert fake_client.post.call_args.kwargs["json"]["quality"] == "medium"
+
+    @pytest.mark.asyncio
+    async def test_raises_when_response_has_no_image(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+
+        fake_response = MagicMock()
+        fake_response.raise_for_status = MagicMock()
+        fake_response.json.return_value = {"data": []}
+        fake_client = _fake_async_client(fake_response)
+
+        with patch("app.decks.llm.images.httpx.AsyncClient", return_value=fake_client):
+            with pytest.raises(images.ImageGenerationError, match="não retornou nenhuma imagem"):
+                await images._generate_image_openai("um gato programando")
