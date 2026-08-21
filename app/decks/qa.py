@@ -3,7 +3,7 @@ QA visual — fatia 7. Checks determinísticos, sem IA e sem custo (decisão do
 usuário em 2026-08-18: preferir isso a uma revisão via LLM, que custaria
 token por slide e traria mais uma dependência de quota como a da fatia 6).
 
-Três checks, cada um cobrindo um jeito real do deck sair errado:
+Quatro checks, cada um cobrindo um jeito real do deck sair errado:
   1. Overflow de texto — conteúdo maior que a caixa fixa do slide (1280x720),
      medido de verdade no Chromium via Playwright (mesma técnica de
      diagrams.py), não estimado por contagem de caracteres.
@@ -14,6 +14,13 @@ Três checks, cada um cobrindo um jeito real do deck sair errado:
      sintaxe original (a etapa `assets` não conseguiu resolver), o que
      significa que o PDF final mostra o placeholder tracejado no lugar da
      imagem/diagrama.
+  4. Vão vertical vazio (2026-08-21, tarefa 3) — nasceu de um achado real
+     comparando nosso resultado com uma referência: a coluna de conteúdo do
+     layout `infographic` podia deixar um vão enorme entre os painéis e a
+     citação (a citação sempre ancora no rodapé via `margin-top: auto`,
+     então conteúdo curto empurra ela pra baixo e sobra um vão no meio).
+     Medido de verdade no Chromium — maior distância entre dois elementos
+     consecutivos dentro de `.infographic__content`.
 
 Decisão do usuário (2026-08-18): isso é só um AVISO, nunca bloqueia o job —
 mesma filosofia de resiliência do resto do pipeline (assets quebrados também
@@ -29,6 +36,12 @@ from playwright.async_api import async_playwright
 # deste deck se qualifica (corpo é 22px, títulos são 40px+), por isso 3.0 é
 # o limiar certo aqui, não o 4.5 de texto normal.
 _MIN_CONTRAST_RATIO = 3.0
+
+# Vão vertical máximo aceito entre dois elementos consecutivos dentro de
+# `.infographic__content` antes de virar aviso — slide tem 720px de altura
+# total; um vão de 130px+ já é visualmente perceptível como "espaço vazio
+# no meio do slide" (achado real de 2026-08-21, comparando com referência).
+_MAX_VERTICAL_GAP_PX = 130
 
 
 def _relative_luminance(hex_color: str) -> float:
@@ -135,9 +148,55 @@ async def _check_overflow(html: str) -> list[dict]:
     ]
 
 
+async def _check_sparse_layout(html: str) -> list[dict]:
+    """
+    Mede o maior vão vertical entre elementos consecutivos dentro de
+    `.infographic__content` (eyebrow/título/subtítulo/painéis/citação) — um
+    vão grande ali é o sintoma visual de "conteúdo curto demais, sobrou
+    espaço vazio no meio do slide" (achado real de 2026-08-21). Só se aplica
+    a slides `infographic` — os outros layouts não têm essa estrutura.
+    """
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        try:
+            page = await browser.new_page()
+            await page.set_content(html, wait_until="domcontentloaded")
+            results = await page.eval_on_selector_all(
+                ".infographic__content",
+                """(contents) => contents.map(content => {
+                    const slide = content.closest('.slide');
+                    const children = Array.from(content.children);
+                    let maxGap = 0;
+                    for (let i = 1; i < children.length; i++) {
+                        const prev = children[i - 1].getBoundingClientRect();
+                        const curr = children[i].getBoundingClientRect();
+                        const gap = curr.top - prev.bottom;
+                        if (gap > maxGap) maxGap = gap;
+                    }
+                    return { id: slide ? slide.id : null, maxGap };
+                })""",
+            )
+        finally:
+            await browser.close()
+
+    return [
+        {
+            "slide_id": r["id"],
+            "kind": "sparse_layout",
+            "message": (
+                f"Vão vertical de {round(r['maxGap'])}px entre elementos deste slide "
+                f"— acima do limite ({_MAX_VERTICAL_GAP_PX}px), sugere conteúdo curto "
+                "demais pro espaço disponível (considere mais painéis ou mais texto)."
+            ),
+        }
+        for r in results
+        if r["maxGap"] > _MAX_VERTICAL_GAP_PX
+    ]
+
+
 async def check_deck(deck: DeckSpec) -> dict:
     """
-    Roda os três checks e devolve um relatório agregado — nunca levanta
+    Roda os quatro checks e devolve um relatório agregado — nunca levanta
     exceção por causa de um PROBLEMA encontrado (isso é o ponto: são avisos,
     não falhas). Só propaga exceção se algo realmente quebrar na checagem em
     si (ex.: Chromium não sobe) — aí sim é uma falha real da etapa `qa`.
@@ -147,5 +206,6 @@ async def check_deck(deck: DeckSpec) -> dict:
         *_check_contrast(deck.theme),
         *_check_unresolved_assets(deck),
         *(await _check_overflow(html)),
+        *(await _check_sparse_layout(html)),
     ]
     return {"issues": issues, "issue_count": len(issues)}

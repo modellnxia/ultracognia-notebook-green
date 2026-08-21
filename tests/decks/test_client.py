@@ -138,7 +138,27 @@ class TestGenerateTextDispatch:
 
         # não quebra — só ignora a imagem e segue só com texto
         m_call.assert_awaited_once()
-        assert "não suporta imagem" in caplog.text
+        assert "não é vision-capable" in caplog.text
+        # a chamada foi feita SEM reference_images (só texto) pro provider não-vision
+        assert len(m_call.call_args.args) == 4  # url, api_key, model, prompt — sem o 5º arg (imagens)
+
+    @pytest.mark.asyncio
+    async def test_forwards_images_to_openai_vision_capable_provider(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+        conn = object()
+        providers = [{"name": "openai", "url": "http://openai", "priority": 1}]
+
+        with (
+            patch("app.decks.llm.client.list_active_providers", new=AsyncMock(return_value=providers)),
+            patch(
+                "app.decks.llm.client._call_openai_compatible",
+                new=AsyncMock(return_value=("ok", 1, 1)),
+            ) as m_call,
+        ):
+            await client.generate_text("prompt", conn, reference_images=[(b"x", "image/png")])
+
+        m_call.assert_awaited_once()
+        assert m_call.call_args.args[4] == [(b"x", "image/png")]
 
     @pytest.mark.asyncio
     async def test_raises_when_all_providers_fail(self, monkeypatch):

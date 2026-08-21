@@ -19,7 +19,7 @@ from enum import Enum
 from typing import Literal, Optional, Union
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 
 class LayoutId(str, Enum):
@@ -87,7 +87,18 @@ class Theme(BaseModel):
 
     @field_validator("palette")
     @classmethod
-    def background_must_be_dark(cls, v: dict[str, str]) -> dict[str, str]:
+    def background_must_be_dark(cls, v: dict[str, str], info: ValidationInfo) -> dict[str, str]:
+        """
+        Guardrail "criativo com margem" — só ativo quando `apply_style_guardrails`
+        estiver True no contexto de validação (2026-08-21, tarefa 1: checkbox
+        na tela liga/desliga o rulebook inteiro). Sem contexto explícito,
+        assume True (comportamento de sempre, retrocompatível — todo código
+        que já chama `Theme(...)`/`DeckSpec.model_validate(...)` sem passar
+        `context=` continua exigindo fundo escuro, como sempre foi).
+        """
+        if info.context and info.context.get("enforce_dark_background") is False:
+            return v
+
         background = v.get("background")
         if background is None:
             return v

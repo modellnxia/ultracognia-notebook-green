@@ -110,8 +110,13 @@
      slide via `slide.illustration_position` / `eyebrow_style` / `panel_style`
      / `arrangement` / `citation_style` — todas opcionais; sem nenhuma
      preenchida, cai no visual padrão de sempre (retrocompatível). ── */
+  /* SEM padding aqui de propósito (2026-08-21, achado real comparando com
+     referência): o padding ficava em cima de TODO o slide, inclusive a
+     mídia — a imagem nunca chegava a encostar na borda de verdade, sempre
+     ficava "emoldurada". O padding agora vive só em `.infographic__content`
+     (abaixo), a mídia (`.infographic__media`) fica flush nas bordas. */
   .slide--infographic {
-    padding: 36px 56px 26px;
+    padding: 0;
   }
   .slide__eyebrow {
     display: inline-block;
@@ -163,9 +168,19 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 18px;
+    padding: 36px 56px 26px 56px; /* base: os 2 lados — cobre illustration_position="none" */
   }
-  .infographic__content .panels-grid,
+  /* peça: illustration_position — o lado que encosta na mídia não leva
+     padding próprio (o `gap` do frame já dá o respiro); só o lado externo
+     (que toca a borda do slide) mantém padding. */
+  .slide--infographic.illustration--left .infographic__content { padding-left: 0; }
+  .slide--infographic.illustration--right .infographic__content { padding-right: 0; }
+  /* Só a citação ancora no rodapé (comportamento correto de footer,
+     independente de quanto conteúdo veio acima). Os painéis NÃO levam mais
+     `margin-top: auto` — antes empurravam pro final do slide e deixavam um
+     vão vazio enorme entre o subtítulo e eles quando o conteúdo era curto
+     (achado real, 2026-08-21, comparando com a referência). */
   .infographic__content .slide__citation { margin-top: auto; }
 
   .slide--infographic.illustration--right .infographic__frame { flex-direction: row-reverse; }

@@ -14,6 +14,8 @@ from app.decks.models import (
     BulletListBlock,
     DeckSpec,
     LayoutId,
+    Panel,
+    PanelListBlock,
     ParagraphBlock,
     Slide,
     SlideAsset,
@@ -149,3 +151,60 @@ class TestCheckDeck:
         kinds = {i["kind"] for i in report["issues"]}
         assert "low_contrast" in kinds
         assert "unresolved_asset" in kinds
+
+
+class TestCheckSparseLayout:
+    """
+    Check novo (2026-08-21, tarefa 3) — nasceu de um achado real comparando
+    nosso resultado com uma referência: conteúdo curto deixava um vão vazio
+    grande entre os painéis e a citação (a citação ancora no rodapé via CSS,
+    então sobra espaço no meio quando o resto é curto). Chromium real via
+    Playwright, mesmo raciocínio de `_check_overflow`.
+    """
+
+    def _infographic_deck(self, panels: list[Panel], citation: str | None = "Fonte X") -> DeckSpec:
+        return DeckSpec(
+            theme=_theme(),
+            slides=[
+                Slide(
+                    layout=LayoutId.INFOGRAPHIC,
+                    title="Título de teste",
+                    eyebrow="Categoria",
+                    citation=citation,
+                    body=[
+                        ParagraphBlock(text="Subtítulo curto."),
+                        PanelListBlock(panels=panels),
+                    ],
+                )
+            ],
+        )
+
+    @pytest.mark.asyncio
+    async def test_flags_large_gap_with_sparse_content(self):
+        # 2 painéis bem curtos + citação — deixa vão grande entre eles (o
+        # cenário real que motivou o check, achado comparando com a referência)
+        deck = self._infographic_deck(
+            panels=[Panel(heading="A", text="x"), Panel(heading="B", text="y")]
+        )
+        report = await qa.check_deck(deck)
+        assert any(i["kind"] == "sparse_layout" for i in report["issues"])
+
+    @pytest.mark.asyncio
+    async def test_no_issue_when_no_citation_and_content_fills_naturally(self):
+        # sem citação, painéis logo após o subtítulo — sem elemento ancorado
+        # no rodapé pra criar um vão grande depois deles
+        deck = self._infographic_deck(
+            panels=[Panel(heading="A", text="x"), Panel(heading="B", text="y")],
+            citation=None,
+        )
+        report = await qa.check_deck(deck)
+        assert not any(i["kind"] == "sparse_layout" for i in report["issues"])
+
+    @pytest.mark.asyncio
+    async def test_no_issue_for_non_infographic_layout(self):
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[Slide(layout=LayoutId.TITLE_BULLETS, title="X", body=[BulletListBlock(items=["um"])])],
+        )
+        report = await qa.check_deck(deck)
+        assert not any(i["kind"] == "sparse_layout" for i in report["issues"])

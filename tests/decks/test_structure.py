@@ -183,3 +183,119 @@ class TestGenerateDeckStructurePreferredProvider:
         assert "eyebrow" in prompt.lower()
         assert "painéis" in prompt.lower() or "paineis" in prompt.lower()
         assert "citação" in prompt.lower() or "citacao" in prompt.lower()
+
+
+class TestBuildPromptStyleGuardrailToggle:
+    """Checkbox da tela (2026-08-21, tarefa 1) — ver FEWSHOT_RULEBOOK.md."""
+
+    def test_guardrails_on_includes_rulebook_content(self):
+        # prosa explicativa da _COMPOSITION_GUIDE — não confundir com nome de
+        # campo do schema (esses aparecem sempre, o schema é estrutural e
+        # sempre incluído, independente do checkbox).
+        prompt = structure._build_prompt("editorial", apply_style_guardrails=True)
+        assert "Cada campo é INDEPENDENTE dos outros" in prompt  # _COMPOSITION_GUIDE
+        assert "PADRÃO OBRIGATÓRIO DE QUALIDADE" in prompt  # _QUALITY_BAR
+        assert "PRECISA ser um tom ESCURO" in prompt  # regra de fundo escuro
+        assert "Exemplo de UM slide" in prompt  # _STRUCTURE_EXAMPLE_JSON
+
+    def test_guardrails_off_excludes_rulebook_content(self):
+        prompt = structure._build_prompt("editorial", apply_style_guardrails=False)
+        assert "Cada campo é INDEPENDENTE dos outros" not in prompt
+        assert "PADRÃO OBRIGATÓRIO DE QUALIDADE" not in prompt
+        assert "PRECISA ser um tom ESCURO" not in prompt
+        assert "Exemplo de UM slide" not in prompt
+
+    def test_guardrails_off_still_lists_valid_layout_enum(self):
+        # estrutural (schema), não opinião de estilo — sempre presente
+        prompt = structure._build_prompt("editorial", apply_style_guardrails=False)
+        assert "infographic" in prompt
+        assert "cover" in prompt
+
+    def test_guardrails_on_and_off_both_include_extraction_guide(self):
+        # extração de campos do editorial não é opinião de estilo — sempre ativa
+        on_prompt = structure._build_prompt("editorial", apply_style_guardrails=True)
+        off_prompt = structure._build_prompt("editorial", apply_style_guardrails=False)
+        assert "Deep English Prompt" in on_prompt
+        assert "Deep English Prompt" in off_prompt
+
+    def test_guardrails_on_and_off_both_include_schema_and_editorial(self):
+        # o JSON schema e o editorial em si SEMPRE entram, independente do checkbox
+        for flag in (True, False):
+            prompt = structure._build_prompt("meu editorial único", apply_style_guardrails=flag)
+            assert "meu editorial único" in prompt
+            assert '"DeckSpec"' in prompt or "DeckSpec" in prompt
+
+
+class TestGenerateDeckStructureStyleGuardrailWiring:
+    @pytest.mark.asyncio
+    async def test_guardrails_off_skips_fewshot_images_and_relaxed_context(self, monkeypatch):
+        conn = object()
+        mock_generate = AsyncMock(return_value=(_valid_deck_json(), 1, 1))
+
+        with (
+            patch("app.decks.structure.generate_text", mock_generate),
+            patch("app.decks.structure._load_fewshot_images", return_value=[(b"x", "image/jpeg")]) as m_load,
+        ):
+            await structure.generate_deck_structure("editorial", conn, apply_style_guardrails=False)
+
+        # imagens de referência não devem nem ser carregadas quando o guardrail está desligado
+        assert mock_generate.await_args.kwargs["reference_images"] == []
+
+    @pytest.mark.asyncio
+    async def test_guardrails_on_loads_fewshot_images(self):
+        conn = object()
+        mock_generate = AsyncMock(return_value=(_valid_deck_json(), 1, 1))
+
+        with (
+            patch("app.decks.structure.generate_text", mock_generate),
+            patch("app.decks.structure._load_fewshot_images", return_value=[(b"x", "image/jpeg")]),
+        ):
+            await structure.generate_deck_structure("editorial", conn, apply_style_guardrails=True)
+
+        assert mock_generate.await_args.kwargs["reference_images"] == [(b"x", "image/jpeg")]
+
+    @pytest.mark.asyncio
+    async def test_guardrails_off_accepts_light_background_from_llm(self):
+        """Ponta a ponta: LLM devolve fundo claro, guardrail desligado deixa passar."""
+        conn = object()
+        light_deck_json = json.dumps(
+            {
+                "version": "1.0",
+                "theme": {
+                    "palette": {"primary": "#0A192F", "background": "#F8FAFC", "text": "#111111"},
+                    "font_stack": "Georgia",
+                },
+                "slides": [{"layout": "cover", "title": "X"}],
+            }
+        )
+        mock_generate = AsyncMock(return_value=(light_deck_json, 1, 1))
+
+        with patch("app.decks.structure.generate_text", mock_generate):
+            deck, *_ = await structure.generate_deck_structure(
+                "editorial", conn, apply_style_guardrails=False
+            )
+
+        assert deck.theme.palette["background"] == "#F8FAFC"
+
+    @pytest.mark.asyncio
+    async def test_guardrails_on_rejects_light_background_and_retries(self):
+        """Mesmo cenário, guardrail ligado — deve rejeitar e retentar (não aceitar de primeira)."""
+        conn = object()
+        light_deck_json = json.dumps(
+            {
+                "version": "1.0",
+                "theme": {
+                    "palette": {"primary": "#0A192F", "background": "#F8FAFC", "text": "#111111"},
+                    "font_stack": "Georgia",
+                },
+                "slides": [{"layout": "cover", "title": "X"}],
+            }
+        )
+        mock_generate = AsyncMock(return_value=(light_deck_json, 1, 1))
+
+        with patch("app.decks.structure.generate_text", mock_generate):
+            with pytest.raises(ValueError, match="claro demais|Não foi possível gerar"):
+                await structure.generate_deck_structure("editorial", conn, apply_style_guardrails=True)
+
+        # tentou MAX_STRUCTURE_ATTEMPTS vezes, sempre recebendo o mesmo fundo claro
+        assert mock_generate.await_count == structure.MAX_STRUCTURE_ATTEMPTS

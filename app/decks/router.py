@@ -28,9 +28,24 @@ class CreateDeckJobRequest(BaseModel):
     user_id: UUID
     editorial_text: str = Field(min_length=1, description="Editorial colado pelo usuário no chat")
     client_id: Optional[UUID] = None
-    llm_provider: Optional[Literal["gemini", "deepseek", "openrouter"]] = Field(
+    llm_provider: Optional[Literal["gemini", "deepseek", "openai"]] = Field(
         default=None,
-        description="Escolha explícita do combo na tela (2026-08-20). Omitir = fallback automático de sempre entre os providers ativos.",
+        description=(
+            "Escolha explícita do combo na tela — cada opção roda ponta a ponta num provider só, "
+            "texto E imagem (2026-08-21): 'gemini' usa Gemini pros dois; 'deepseek' usa DeepSeek pro "
+            "texto + OpenAI pra imagem (DeepSeek não tem produto de imagem); 'openai' usa OpenAI pros "
+            "dois. 'openrouter' foi removido do combo (decisão do usuário, 2026-08-21). Omitir = "
+            "fallback automático de sempre entre os providers ativos, imagem cai no default da env var."
+        ),
+    )
+    apply_style_guardrails: bool = Field(
+        default=True,
+        description=(
+            "Checkbox da tela (2026-08-21) — ligado (padrão): aplica o rulebook visual interno "
+            "(vocabulário de composição, exemplos de referência, fundo obrigatoriamente escuro). "
+            "Desligado: só o editorial do usuário guia o resultado, sem nenhuma opinião de estilo "
+            "nossa — inclusive paleta clara é aceita se o editorial pedir."
+        ),
     )
 
 
@@ -48,6 +63,7 @@ class DeckJobStatusResponse(BaseModel):
     cost_cents: int
     created_at: datetime
     llm_provider: Optional[str] = None
+    apply_style_guardrails: bool = True
     steps: list[StepStatus]
 
 
@@ -59,6 +75,7 @@ class DeckJobSummary(BaseModel):
     cost_cents: int
     created_at: datetime
     llm_provider: Optional[str] = None
+    apply_style_guardrails: bool = True
     editorial_preview: str = Field(description="Primeiros ~80 caracteres do editorial, truncado no banco.")
 
 
@@ -73,6 +90,7 @@ def _to_status_response(job, steps) -> DeckJobStatusResponse:
         cost_cents=job["cost_cents"],
         created_at=job["created_at"],
         llm_provider=job["llm_provider"],
+        apply_style_guardrails=job["apply_style_guardrails"],
         steps=[
             StepStatus(
                 step=s["step"],
@@ -91,7 +109,9 @@ async def create_deck_job(req: CreateDeckJobRequest) -> DeckJobStatusResponse:
     """Cria o job e já enfileira as 4 etapas como 'pending'. Responde na hora — quem processa é o poller."""
     async for conn in get_db_conn():
         repo = DeckJobRepository(conn)
-        job = await repo.create_job(req.user_id, req.editorial_text, req.client_id, req.llm_provider)
+        job = await repo.create_job(
+            req.user_id, req.editorial_text, req.client_id, req.llm_provider, req.apply_style_guardrails
+        )
         steps = await repo.get_steps(job["id"])
         logger.info("Deck job criado — id=%s, user_id=%s", job["id"], req.user_id)
         return _to_status_response(job, steps)

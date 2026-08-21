@@ -33,7 +33,8 @@ Autenticação: header `x-api-key` em todas as chamadas (case-insensitive, mas o
   "user_id": "13d32c21-0432-43b7-b787-cae9eb4f42b2",   // uuid do usuário dono do deck
   "editorial_text": "texto completo colado pelo usuário no chat...",  // obrigatório, min 1 char
   "client_id": null,   // uuid opcional — reservado pra white-label (tema por cliente), ainda não usado por nenhum agente
-  "llm_provider": null   // novo, 2026-08-20 — "gemini" | "deepseek" | "openrouter" | omitir/null. Ver seção 3.1
+  "llm_provider": null,   // "gemini" | "deepseek" | "openai" | omitir/null. Ver seção 3.1 (openrouter removido do combo em 2026-08-21)
+  "apply_style_guardrails": true   // novo, 2026-08-21 — checkbox na tela. Ver seção 3.2
 }
 ```
 
@@ -45,6 +46,7 @@ Autenticação: header `x-api-key` em todas as chamadas (case-insensitive, mas o
   "cost_cents": 0,
   "created_at": "2026-08-20T10:00:00Z",
   "llm_provider": null,
+  "apply_style_guardrails": true,
   "steps": [
     {"step": "structure", "status": "pending", "attempt": 0, "output_ref": null, "error": null},
     {"step": "assets",    "status": "pending", "attempt": 0, "output_ref": null, "error": null},
@@ -56,15 +58,27 @@ Autenticação: header `x-api-key` em todas as chamadas (case-insensitive, mas o
 
 **Responde na hora** — quem processa de fato é um poller assíncrono do lado de cá (roda a cada ~5s). O front não espera a geração terminar nessa chamada.
 
-### 3.1. Escolha de provider de IA (`llm_provider`) — combo novo na tela (2026-08-20)
+### 3.1. Escolha de provider de IA (`llm_provider`) — combo na tela
 
-Pedido explícito do cliente: poder **escolher e comparar** entre os 3 providers de IA disponíveis — `gemini`, `deepseek`, `openrouter`. Precisa de um combo/select na tela, com uma opção adicional de "automático" (que é omitir o campo, ou mandar `null`).
+⚠️ **Mudança de contrato em 2026-08-21**: `openrouter` foi **removido** do combo (decisão do cliente) e `openai` **entrou** no lugar. Se o combo já estava implementado com as 3 opções antigas (`gemini`/`deepseek`/`openrouter`), precisa trocar `openrouter` por `openai` — mandar `"openrouter"` agora dá **422** (schema não aceita mais esse valor).
 
-- **Omitir o campo (ou `null`)** — comportamento de sempre: tenta o provider de maior prioridade (`gemini` hoje), cai pro próximo automaticamente se falhar.
-- **Valor explícito** (`"gemini"`, `"deepseek"` ou `"openrouter"`) — usa **só** esse provider. Se ele falhar, o job vai pra `failed` (não cai silenciosamente pra outro — é assim de propósito, pra vocês conseguirem comparar de verdade qual provider entrega o quê).
-- Hoje só `gemini` e `deepseek` têm chave configurada. `openrouter` já está pronto no código, só falta a chave (cliente ainda está gerando) — pode deixar a opção no combo mesmo assim, só vai dar erro claro (`failed`, com `error` explicando) até a chave existir.
-- **DeepSeek e OpenRouter não recebem as imagens de referência** (só o Gemini é multimodal) — o prompt deles usa uma descrição em texto do mesmo padrão visual como reforço. Validado de verdade: mesmo sem imagem, o DeepSeek escolheu o layout certo e preencheu os campos certos.
-- A resposta (`GET /decks/{id}` e cada item de `GET /decks`) mostra qual `llm_provider` foi usado em `llm_provider` — útil pra exibir um selo tipo "Gerado com: DeepSeek" na lista/no card do deck.
+Combo final: `gemini` | `deepseek` | `openai` | automático (omitir campo/`null`). Cada opção roda **ponta a ponta num provider só, texto E imagem juntos** — não é só o texto que muda:
+
+- **`"gemini"`** — Gemini gera o texto/layout **e** a imagem. Nenhuma chamada à OpenAI nesse caminho.
+- **`"deepseek"`** — DeepSeek gera o texto/layout; a imagem é gerada pela **OpenAI** (DeepSeek não tem produto de imagem próprio — é assim de propósito, não é bug).
+- **`"openai"`** — OpenAI gera o texto/layout **e** a imagem (novo em 2026-08-21 — o texto da OpenAI também é multimodal, recebe as mesmas imagens de referência que o Gemini recebe).
+- **Omitir o campo (ou `null`)** — comportamento de fallback automático: tenta o provider de maior prioridade, cai pro próximo se falhar. A imagem, nesse caso, usa o default do backend (`DECK_IMAGE_PROVIDER`).
+- Valor explícito e ele falhar → o job vai pra `failed` (não cai silenciosamente pra outro — de propósito, pra vocês conseguirem comparar de verdade qual provider entrega o quê).
+- A resposta (`GET /decks/{id}` e cada item de `GET /decks`) mostra qual `llm_provider` foi usado — útil pra exibir um selo tipo "Gerado com: DeepSeek" na lista/no card do deck.
+
+### 3.2. Checkbox de guardrail visual (`apply_style_guardrails`) — novo em 2026-08-21
+
+Controla se o "rulebook" visual interno (vocabulário de composição — posição de ilustração, estilo de painel, etc. — mais o piso de qualidade/densidade que a gente aplica) entra na geração ou não:
+
+- **`true`** (default, se omitir o campo) — comportamento atual: o rulebook entra, fundo do slide é obrigatoriamente escuro (validado automaticamente).
+- **`false`** — geração livre, só o editorial do usuário guia o resultado, sem nenhuma opinião de estilo nossa — inclusive aceita paleta clara se o editorial pedir uma.
+
+Sugestão de UI: um toggle/checkbox simples, talvez com um tooltip tipo "Aplicar padrão visual da Ultracognia" (ligado) vs. "Deixar a IA decidir o estilo livremente" (desligado) — texto exato fica a critério de vocês, é só pra dar a ideia do que a opção faz.
 
 ### `GET /decks/{job_id}` — consulta status (pra fazer polling)
 
@@ -87,6 +101,7 @@ Resolve o problema de "perdi a sessão e não sei mais o ID dos meus decks" — 
       "cost_cents": 0,
       "created_at": "2026-08-19T23:00:00Z",
       "llm_provider": "deepseek",
+      "apply_style_guardrails": true,
       "editorial_preview": "Relatório: Modernização da Cadeia de Suprimentos via IA Prediti…"
     }
   ]

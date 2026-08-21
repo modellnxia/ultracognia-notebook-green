@@ -4,15 +4,18 @@ módulo. Lê os providers ativos (ver providers.py) e tenta cada um em ordem
 de prioridade, pulando quem não tem chave de API configurada; só levanta
 erro se todos falharem (ou nenhum tiver chave).
 
-Dois formatos de chamada, não três: Gemini tem formato próprio
-(`generateContent`); DeepSeek e OpenRouter são OpenAI-compatible
-(`/chat/completions`) — o mesmo adaptador serve os dois.
+Dois formatos de chamada: Gemini tem formato próprio (`generateContent`);
+DeepSeek, OpenRouter e OpenAI são OpenAI-compatible (`/chat/completions`) —
+o mesmo adaptador serve os três (OpenAI é literalmente o formato original
+que os outros dois imitam).
 
 Suporte a imagem de referência (few-shot visual, 2026-08-19 — ver
-structure.py): só implementado pro Gemini, que é o único provider ativo
-hoje. Se o fallback cair pro DeepSeek/OpenRouter com imagens pedidas, elas
-são simplesmente ignoradas (loga aviso) — não vale a pena implementar um
-formato multimodal pra um provider sem chave configurada ainda.
+structure.py): Gemini sempre teve (nativo). OpenAI ganhou em 2026-08-21 —
+model vision-capable de verdade (`gpt-5.4`, validado manualmente com uma
+imagem real antes de entrar em produção), formato `image_url` com data URI
+base64 dentro do array `content` da mensagem. DeepSeek/OpenRouter continuam
+sem — não são multimodais, as imagens são simplesmente ignoradas (loga
+aviso) se pedidas pra eles.
 """
 
 import base64
@@ -28,21 +31,30 @@ logger = logging.getLogger(__name__)
 
 # Nome da env var com a chave de API de cada provider, por nome cadastrado
 # na tabela `providers`. Sem a env var setada, esse provider é pulado no
-# fallback — hoje só GEMINI_API_KEY existe.
+# fallback.
 _API_KEY_ENV_BY_PROVIDER = {
     "gemini": "GEMINI_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
+    "openai": "OPENAI_API_KEY",
 }
 
-# DeepSeek/OpenRouter exigem um "model" explícito no corpo da requisição —
-# diferente do Gemini, que já embute o modelo na própria URL cadastrada.
-# Ainda sem chave configurada pra nenhum dos dois; defaults razoáveis a
-# revisar quando as chaves reais entrarem (ver decisão de 2026-08-18).
+# DeepSeek/OpenRouter/OpenAI exigem um "model" explícito no corpo da
+# requisição — diferente do Gemini, que já embute o modelo na própria URL
+# cadastrada. `gpt-5.4` validado manualmente (chamada real, texto e
+# multimodal) em 2026-08-21 antes de virar default.
 _OPENAI_COMPAT_DEFAULT_MODEL = {
     "deepseek": "deepseek-chat",
     "openrouter": "google/gemini-2.5-flash",
+    "openai": "gpt-5.4",
 }
+
+# Só o OpenAI, entre os três providers OpenAI-compatible, é vision-capable
+# de verdade (validado manualmente, ver docstring do módulo) — DeepSeek/
+# OpenRouter recebem só o texto do prompt mesmo se `reference_images` vier
+# preenchido (a descrição em texto do padrão visual já cobre esse caso, ver
+# `_FEWSHOT_DESCRIPTION` em structure.py).
+_VISION_CAPABLE_OPENAI_COMPAT_PROVIDERS = {"openai"}
 
 
 class LLMError(RuntimeError):
@@ -78,13 +90,31 @@ async def _call_gemini(
 
 
 async def _call_openai_compatible(
-    url: str, api_key: str, model: str, prompt: str
+    url: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    reference_images: list[tuple[bytes, str]] | None = None,
 ) -> tuple[str, int, int]:
+    """
+    `reference_images` só deve ser passado por quem chama quando o provider
+    é confirmadamente vision-capable (ver `_VISION_CAPABLE_OPENAI_COMPAT_PROVIDERS`
+    em `generate_text`) — aqui a função só monta o formato, não decide se
+    faz sentido mandar imagem pra esse provider.
+    """
+    if reference_images:
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        for image_bytes, mime_type in reference_images:
+            b64 = base64.b64encode(image_bytes).decode()
+            content.append({"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}})
+    else:
+        content = prompt
+
     async with httpx.AsyncClient(timeout=90) as client:
         resp = await client.post(
             url,
             headers={"Authorization": f"Bearer {api_key}"},
-            json={"model": model, "messages": [{"role": "user", "content": prompt}]},
+            json={"model": model, "messages": [{"role": "user", "content": content}]},
         )
         resp.raise_for_status()
         data = resp.json()
@@ -105,7 +135,7 @@ async def generate_text(
       - `preferred_provider=None` (padrão): tenta cada provider ativo em
         ordem de prioridade, cai pro próximo se um falhar — comportamento
         de sempre.
-      - `preferred_provider="gemini"/"deepseek"/"openrouter"` (2026-08-20 —
+      - `preferred_provider="gemini"/"deepseek"/"openai"` (combo de escolha na tela —
         combo de escolha na tela): usa **só** esse provider, sem cair pra
         outro se falhar. Escolha explícita do usuário pra poder comparar os
         providers de verdade — cair silenciosamente pra outro destruiria a
@@ -145,13 +175,14 @@ async def generate_text(
         try:
             if name == "gemini":
                 return await _call_gemini(provider["url"], api_key, prompt, reference_images)
-            if reference_images:
-                logger.warning(
-                    "Provider '%s' não suporta imagem de referência ainda — "
-                    "chamando só com texto.", name,
-                )
+
             model = _OPENAI_COMPAT_DEFAULT_MODEL.get(name, "auto")
-            return await _call_openai_compatible(provider["url"], api_key, model, prompt)
+            if reference_images and name not in _VISION_CAPABLE_OPENAI_COMPAT_PROVIDERS:
+                logger.warning(
+                    "Provider '%s' não é vision-capable — chamando só com texto.", name,
+                )
+                return await _call_openai_compatible(provider["url"], api_key, model, prompt)
+            return await _call_openai_compatible(provider["url"], api_key, model, prompt, reference_images)
         except Exception as exc:
             logger.warning("Provider '%s' falhou, tentando próximo: %s", name, exc)
             last_error = exc

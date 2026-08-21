@@ -25,6 +25,19 @@ logger = logging.getLogger(__name__)
 StepResult = tuple[str, int, int, int]  # (output_ref, input_tokens, output_tokens, cost_cents)
 StepExecutor = Callable[[UUID, asyncpg.Connection], Awaitable[StepResult]]
 
+# Peça central da tarefa 2 (2026-08-21) — cada opção do combo é travada
+# ponta a ponta: Gemini escolhido usa Gemini pra texto E imagem; DeepSeek e
+# OpenAI (escolhidos) usam OpenAI pra imagem (DeepSeek não tem produto de
+# imagem próprio). `run_assets` usa isso pra decidir o provider por job —
+# substitui o antigo comportamento de sempre olhar só a env var
+# `DECK_IMAGE_PROVIDER` fixa, que não sabia qual `llm_provider` o job tinha
+# escolhido.
+_IMAGE_PROVIDER_BY_LLM_PROVIDER = {
+    "gemini": "gemini",
+    "deepseek": "openai",
+    "openai": "openai",
+}
+
 
 async def run_structure(job_id: UUID, conn: asyncpg.Connection) -> StepResult:
     """
@@ -32,12 +45,17 @@ async def run_structure(job_id: UUID, conn: asyncpg.Connection) -> StepResult:
     chama o LLM pra transformar em `DeckSpec` — layout, tema e blocos de
     conteúdo de cada slide, tudo numa chamada só (ver structure.py).
     """
-    row = await conn.fetchrow("SELECT editorial_text, llm_provider FROM deck_jobs WHERE id = $1", job_id)
+    row = await conn.fetchrow(
+        "SELECT editorial_text, llm_provider, apply_style_guardrails FROM deck_jobs WHERE id = $1", job_id
+    )
     if row is None:
         raise ValueError(f"Job {job_id} não encontrado.")
 
     deck, input_tokens, output_tokens = await generate_deck_structure(
-        row["editorial_text"], conn, preferred_provider=row["llm_provider"]
+        row["editorial_text"],
+        conn,
+        preferred_provider=row["llm_provider"],
+        apply_style_guardrails=row["apply_style_guardrails"],
     )
     output_ref = deck.model_dump_json()
     logger.info(
@@ -49,9 +67,10 @@ async def run_structure(job_id: UUID, conn: asyncpg.Connection) -> StepResult:
     return output_ref, input_tokens, output_tokens, 0
 
 
-async def _resolve_slide_asset(job_id: UUID, slide) -> None:
+async def _resolve_slide_asset(job_id: UUID, slide, image_provider: str | None = None) -> None:
     """
-    Resolve o `asset` de UM slide, in-place: `kind="image"` chama o Gemini;
+    Resolve o `asset` de UM slide, in-place: `kind="image"` chama o provider
+    de imagem decidido pra esse job (ver `_IMAGE_PROVIDER_BY_LLM_PROVIDER`);
     `kind="diagram"` renderiza Mermaid via Playwright. Nos dois casos, sobe o
     PNG resultante no Storage e troca `asset.ref` (que até aqui era um
     prompt/sintaxe em texto) pelo caminho do objeto no bucket.
@@ -73,7 +92,7 @@ async def _resolve_slide_asset(job_id: UUID, slide) -> None:
 
     try:
         if slide.asset.kind == "image":
-            image_bytes, mime_type = await generate_image(slide.asset.ref)
+            image_bytes, mime_type = await generate_image(slide.asset.ref, provider=image_provider)
             ext = "png" if "png" in mime_type else mime_type.split("/")[-1]
         elif slide.asset.kind == "diagram":
             image_bytes = await render_diagram_png(slide.asset.ref)
@@ -109,11 +128,20 @@ async def run_assets(job_id: UUID, conn: asyncpg.Connection) -> StepResult:
     if structure_row is None or structure_row["output_ref"] is None:
         raise ValueError(f"Etapa 'structure' do job {job_id} ainda não tem resultado.")
 
+    job_row = await conn.fetchrow("SELECT llm_provider FROM deck_jobs WHERE id = $1", job_id)
+    llm_provider = job_row["llm_provider"] if job_row else None
+    image_provider = _IMAGE_PROVIDER_BY_LLM_PROVIDER.get(llm_provider)
+    if llm_provider and image_provider is None:
+        logger.warning(
+            "Job %s com llm_provider=%r sem mapeamento de provider de imagem conhecido — "
+            "caindo pro default (DECK_IMAGE_PROVIDER).", job_id, llm_provider,
+        )
+
     deck = DeckSpec.model_validate(json.loads(structure_row["output_ref"]))
 
     await ensure_bucket_exists()
     for slide in deck.slides:
-        await _resolve_slide_asset(job_id, slide)
+        await _resolve_slide_asset(job_id, slide, image_provider)
 
     return deck.model_dump_json(), 0, 0, 0
 

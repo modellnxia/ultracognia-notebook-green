@@ -67,7 +67,33 @@ class TestCreateJob:
         await repo.create_job(user_id, "texto colado")
 
         insert_args = conn.fetchrow.call_args.args
-        assert insert_args[-1] is None  # llm_provider é o último parâmetro do INSERT
+        # ordem do INSERT: user_id, client_id, editorial_text, llm_provider, apply_style_guardrails
+        assert insert_args[-2] is None  # llm_provider
+
+    @pytest.mark.asyncio
+    async def test_apply_style_guardrails_defaults_to_true(self):
+        """Checkbox da tela (2026-08-21) — ligado por padrão."""
+        conn = _mock_transaction_conn()
+        job_id, user_id = uuid.uuid4(), uuid.uuid4()
+        conn.fetchrow.return_value = {"id": job_id, "apply_style_guardrails": True}
+        repo = DeckJobRepository(conn)
+
+        await repo.create_job(user_id, "texto colado")
+
+        insert_args = conn.fetchrow.call_args.args
+        assert insert_args[-1] is True  # apply_style_guardrails é o último parâmetro do INSERT
+
+    @pytest.mark.asyncio
+    async def test_passes_apply_style_guardrails_false(self):
+        conn = _mock_transaction_conn()
+        job_id, user_id = uuid.uuid4(), uuid.uuid4()
+        conn.fetchrow.return_value = {"id": job_id, "apply_style_guardrails": False}
+        repo = DeckJobRepository(conn)
+
+        await repo.create_job(user_id, "texto colado", apply_style_guardrails=False)
+
+        insert_args = conn.fetchrow.call_args.args
+        assert insert_args[-1] is False
 
 
 class TestListJobsForUser:

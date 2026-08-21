@@ -21,24 +21,27 @@ class DeckJobRepository:
         editorial_text: str,
         client_id: Optional[UUID] = None,
         llm_provider: Optional[str] = None,
+        apply_style_guardrails: bool = True,
     ) -> asyncpg.Record:
         """
         Cria o job (com o editorial colado pelo usuário) e já grava as
         etapas como 'pending', em uma transação. `llm_provider`: escolha
-        explícita do usuário (combo na tela, 2026-08-20) — `None` mantém o
-        fallback automático de sempre entre os providers ativos.
+        explícita do usuário (combo na tela) — `None` mantém o fallback
+        automático de sempre entre os providers ativos. `apply_style_guardrails`
+        (2026-08-21): checkbox da tela, liga/desliga o rulebook visual interno.
         """
         async with self.conn.transaction():
             job = await self.conn.fetchrow(
                 """
-                INSERT INTO deck_jobs (user_id, client_id, editorial_text, llm_provider, status)
-                VALUES ($1, $2, $3, $4, 'pending')
-                RETURNING id, user_id, client_id, editorial_text, llm_provider, status, cost_cents, created_at
+                INSERT INTO deck_jobs (user_id, client_id, editorial_text, llm_provider, apply_style_guardrails, status)
+                VALUES ($1, $2, $3, $4, $5, 'pending')
+                RETURNING id, user_id, client_id, editorial_text, llm_provider, apply_style_guardrails, status, cost_cents, created_at
                 """,
                 user_id,
                 client_id,
                 editorial_text,
                 llm_provider,
+                apply_style_guardrails,
             )
             for step in STEP_ORDER:
                 await self.conn.execute(
@@ -67,7 +70,8 @@ class DeckJobRepository:
         """
         return await self.conn.fetch(
             """
-            SELECT id, status, cost_cents, created_at, llm_provider, LEFT(editorial_text, 80) AS editorial_preview
+            SELECT id, status, cost_cents, created_at, llm_provider, apply_style_guardrails,
+                   LEFT(editorial_text, 80) AS editorial_preview
             FROM deck_jobs
             WHERE user_id = $1
             ORDER BY created_at DESC

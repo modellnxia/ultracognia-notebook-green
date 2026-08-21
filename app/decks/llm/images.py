@@ -41,14 +41,21 @@ class ImageGenerationError(RuntimeError):
     """A geração de imagem falhou (chave ausente, API retornou erro, ou resposta sem imagem)."""
 
 
-async def generate_image(prompt: str) -> tuple[bytes, str]:
+async def generate_image(prompt: str, *, provider: str | None = None) -> tuple[bytes, str]:
     """
     Gera uma imagem a partir de um prompt de texto. Retorna
     (bytes_da_imagem, mime_type). Levanta `ImageGenerationError` se algo
     der errado — quem chama (`steps.py::_resolve_slide_asset`) já trata
     isso com isolamento de falha por asset, não precisa tratar aqui.
+
+    `provider`: override explícito (2026-08-21 — combo de 3 opções na tela,
+    cada uma travada ponta a ponta: `llm_provider="gemini"` usa Gemini pra
+    tudo, `llm_provider="deepseek"`/`"openai"` usa OpenAI pra imagem — ver
+    `steps.py::run_assets`). `None` (padrão) mantém o comportamento antigo,
+    lendo `DECK_IMAGE_PROVIDER` da env var — usado quando o job não tem
+    `llm_provider` definido (fallback automático, sem escolha explícita).
     """
-    provider = os.getenv("DECK_IMAGE_PROVIDER", "gemini").strip().lower()
+    provider = (provider or os.getenv("DECK_IMAGE_PROVIDER", "gemini")).strip().lower()
     if provider == "openai":
         return await _generate_image_openai(prompt)
     if provider == "gemini":

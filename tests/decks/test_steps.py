@@ -28,7 +28,11 @@ class TestRunStructure:
         job_id = uuid.uuid4()
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
-            return_value={"editorial_text": "editorial colado pelo usuário", "llm_provider": None}
+            return_value={
+                "editorial_text": "editorial colado pelo usuário",
+                "llm_provider": None,
+                "apply_style_guardrails": True,
+            }
         )
         deck = _valid_deck()
 
@@ -39,7 +43,7 @@ class TestRunStructure:
             output_ref, input_tok, output_tok, cost = await steps.run_structure(job_id, conn)
 
         m_generate.assert_awaited_once_with(
-            "editorial colado pelo usuário", conn, preferred_provider=None
+            "editorial colado pelo usuário", conn, preferred_provider=None, apply_style_guardrails=True
         )
         assert json.loads(output_ref) == json.loads(deck.model_dump_json())
         assert (input_tok, output_tok, cost) == (100, 200, 0)
@@ -49,7 +53,7 @@ class TestRunStructure:
         job_id = uuid.uuid4()
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
-            return_value={"editorial_text": "editorial", "llm_provider": "deepseek"}
+            return_value={"editorial_text": "editorial", "llm_provider": "deepseek", "apply_style_guardrails": False}
         )
         deck = _valid_deck()
 
@@ -59,7 +63,9 @@ class TestRunStructure:
         ) as m_generate:
             await steps.run_structure(job_id, conn)
 
-        m_generate.assert_awaited_once_with("editorial", conn, preferred_provider="deepseek")
+        m_generate.assert_awaited_once_with(
+            "editorial", conn, preferred_provider="deepseek", apply_style_guardrails=False
+        )
 
     @pytest.mark.asyncio
     async def test_raises_when_job_not_found(self):
@@ -77,7 +83,9 @@ class TestRunAssets:
         job_id = uuid.uuid4()
         deck = _valid_deck()  # slide único, sem asset
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"output_ref": deck.model_dump_json()})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None}]
+        )
 
         with (
             patch("app.decks.steps.ensure_bucket_exists", new=AsyncMock()) as m_bucket,
@@ -101,7 +109,9 @@ class TestRunAssets:
         deck.slides[0].asset = SlideAsset(kind="image", ref="um gráfico de crescimento")
         slide_id = deck.slides[0].id
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"output_ref": deck.model_dump_json()})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": "gemini"}]
+        )
 
         with (
             patch("app.decks.steps.ensure_bucket_exists", new=AsyncMock()),
@@ -113,7 +123,7 @@ class TestRunAssets:
         ):
             output_ref, *_ = await steps.run_assets(job_id, conn)
 
-        m_image.assert_awaited_once_with("um gráfico de crescimento")
+        m_image.assert_awaited_once_with("um gráfico de crescimento", provider="gemini")
         m_upload.assert_awaited_once_with(
             f"{job_id}/assets/{slide_id}.png", b"fake-png-bytes", "image/png"
         )
@@ -127,7 +137,9 @@ class TestRunAssets:
         deck.slides[0].asset = SlideAsset(kind="diagram", ref="flowchart LR\nA-->B")
         slide_id = deck.slides[0].id
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"output_ref": deck.model_dump_json()})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None}]
+        )
 
         with (
             patch("app.decks.steps.ensure_bucket_exists", new=AsyncMock()),
@@ -152,7 +164,9 @@ class TestRunAssets:
         deck = _valid_deck()
         deck.slides[0].asset = SlideAsset(kind="image", ref="prompt original")
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"output_ref": deck.model_dump_json()})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None}]
+        )
 
         with (
             patch("app.decks.steps.ensure_bucket_exists", new=AsyncMock()),
@@ -174,7 +188,9 @@ class TestRunAssets:
         deck = _valid_deck()
         deck.slides[0].asset = SlideAsset(kind="diagram", ref="flowchart LR\nA-->B")
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"output_ref": deck.model_dump_json()})
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None}]
+        )
 
         with (
             patch("app.decks.steps.ensure_bucket_exists", new=AsyncMock()),
@@ -295,3 +311,81 @@ class TestRunQa:
 
         with pytest.raises(ValueError, match="assets"):
             await steps.run_qa(job_id, conn)
+
+
+class TestRunAssetsImageProviderMapping:
+    """
+    Tarefa 2 (2026-08-21) — cada opção do combo trava o provider de imagem
+    ponta a ponta: Gemini usa Gemini pra imagem também; DeepSeek e OpenAI
+    usam OpenAI (DeepSeek não tem produto de imagem próprio).
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "llm_provider,expected_image_provider",
+        [("gemini", "gemini"), ("deepseek", "openai"), ("openai", "openai")],
+    )
+    async def test_maps_llm_provider_to_image_provider(self, llm_provider, expected_image_provider):
+        job_id = uuid.uuid4()
+        deck = _valid_deck()
+        deck.slides[0].asset = SlideAsset(kind="image", ref="um prompt qualquer")
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": llm_provider}]
+        )
+
+        with (
+            patch("app.decks.steps.ensure_bucket_exists", new=AsyncMock()),
+            patch(
+                "app.decks.steps.generate_image",
+                new=AsyncMock(return_value=(b"x", "image/png")),
+            ) as m_image,
+            patch("app.decks.steps.upload_object", new=AsyncMock()),
+        ):
+            await steps.run_assets(job_id, conn)
+
+        m_image.assert_awaited_once_with("um prompt qualquer", provider=expected_image_provider)
+
+    @pytest.mark.asyncio
+    async def test_none_llm_provider_falls_back_to_env_default(self):
+        """Job sem `llm_provider` explícito (fallback automático de sempre) — provider=None deixa `generate_image` usar a env var."""
+        job_id = uuid.uuid4()
+        deck = _valid_deck()
+        deck.slides[0].asset = SlideAsset(kind="image", ref="um prompt qualquer")
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": None}]
+        )
+
+        with (
+            patch("app.decks.steps.ensure_bucket_exists", new=AsyncMock()),
+            patch(
+                "app.decks.steps.generate_image", new=AsyncMock(return_value=(b"x", "image/png"))
+            ) as m_image,
+            patch("app.decks.steps.upload_object", new=AsyncMock()),
+        ):
+            await steps.run_assets(job_id, conn)
+
+        m_image.assert_awaited_once_with("um prompt qualquer", provider=None)
+
+    @pytest.mark.asyncio
+    async def test_unknown_llm_provider_falls_back_to_env_default(self):
+        """Ex.: job antigo com llm_provider='openrouter' (removido do combo) — não deve quebrar, só cai no default."""
+        job_id = uuid.uuid4()
+        deck = _valid_deck()
+        deck.slides[0].asset = SlideAsset(kind="image", ref="um prompt qualquer")
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": "openrouter"}]
+        )
+
+        with (
+            patch("app.decks.steps.ensure_bucket_exists", new=AsyncMock()),
+            patch(
+                "app.decks.steps.generate_image", new=AsyncMock(return_value=(b"x", "image/png"))
+            ) as m_image,
+            patch("app.decks.steps.upload_object", new=AsyncMock()),
+        ):
+            await steps.run_assets(job_id, conn)
+
+        m_image.assert_awaited_once_with("um prompt qualquer", provider=None)

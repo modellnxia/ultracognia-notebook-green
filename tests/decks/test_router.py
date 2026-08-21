@@ -39,7 +39,8 @@ class TestCreateDeckJob:
         user_id = uuid.uuid4()
         mock_repo = AsyncMock()
         mock_repo.create_job.return_value = {
-            "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW, "llm_provider": None,
+            "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
+            "llm_provider": None, "apply_style_guardrails": True,
         }
         mock_repo.get_steps.return_value = [
             {"step": "structure", "status": "pending", "attempt": 0, "output_ref": None, "error": None}
@@ -60,7 +61,7 @@ class TestCreateDeckJob:
         assert body["status"] == "pending"
         assert body["steps"][0]["step"] == "structure"
         mock_repo.create_job.assert_awaited_once_with(
-            user_id, "editorial colado pelo usuário", None, None
+            user_id, "editorial colado pelo usuário", None, None, True
         )
 
     @pytest.mark.asyncio
@@ -69,7 +70,8 @@ class TestCreateDeckJob:
         user_id = uuid.uuid4()
         mock_repo = AsyncMock()
         mock_repo.create_job.return_value = {
-            "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW, "llm_provider": "deepseek",
+            "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
+            "llm_provider": "deepseek", "apply_style_guardrails": True,
         }
         mock_repo.get_steps.return_value = []
         with (
@@ -84,7 +86,7 @@ class TestCreateDeckJob:
 
         assert resp.status_code == 201
         assert resp.json()["llm_provider"] == "deepseek"
-        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, "deepseek")
+        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, "deepseek", True)
 
     @pytest.mark.asyncio
     async def test_returns_422_for_unknown_llm_provider(self, app):
@@ -96,6 +98,87 @@ class TestCreateDeckJob:
                 )
 
         assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_returns_422_for_openrouter_removed_from_combo(self, app):
+        """OpenRouter foi removido do combo em 2026-08-21 (decisão do usuário) — não é mais aceito."""
+        with patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/decks",
+                    json={"user_id": str(uuid.uuid4()), "editorial_text": "x", "llm_provider": "openrouter"},
+                )
+
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_accepts_openai_as_llm_provider_choice(self, app):
+        """OpenAI novo no combo (2026-08-21) — texto e imagem, tudo OpenAI."""
+        job_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        mock_repo = AsyncMock()
+        mock_repo.create_job.return_value = {
+            "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
+            "llm_provider": "openai", "apply_style_guardrails": True,
+        }
+        mock_repo.get_steps.return_value = []
+        with (
+            patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()),
+            patch("app.decks.router.DeckJobRepository", return_value=mock_repo),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/decks",
+                    json={"user_id": str(user_id), "editorial_text": "x", "llm_provider": "openai"},
+                )
+
+        assert resp.status_code == 201
+        assert resp.json()["llm_provider"] == "openai"
+
+    @pytest.mark.asyncio
+    async def test_apply_style_guardrails_defaults_to_true_in_request(self, app):
+        job_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        mock_repo = AsyncMock()
+        mock_repo.create_job.return_value = {
+            "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
+            "llm_provider": None, "apply_style_guardrails": True,
+        }
+        mock_repo.get_steps.return_value = []
+        with (
+            patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()),
+            patch("app.decks.router.DeckJobRepository", return_value=mock_repo),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post("/decks", json={"user_id": str(user_id), "editorial_text": "x"})
+
+        assert resp.status_code == 201
+        assert resp.json()["apply_style_guardrails"] is True
+        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, None, True)
+
+    @pytest.mark.asyncio
+    async def test_passes_apply_style_guardrails_false(self, app):
+        job_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        mock_repo = AsyncMock()
+        mock_repo.create_job.return_value = {
+            "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
+            "llm_provider": None, "apply_style_guardrails": False,
+        }
+        mock_repo.get_steps.return_value = []
+        with (
+            patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()),
+            patch("app.decks.router.DeckJobRepository", return_value=mock_repo),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/decks",
+                    json={"user_id": str(user_id), "editorial_text": "x", "apply_style_guardrails": False},
+                )
+
+        assert resp.status_code == 201
+        assert resp.json()["apply_style_guardrails"] is False
+        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, None, False)
 
     @pytest.mark.asyncio
     async def test_returns_422_when_editorial_text_missing(self, app):
@@ -205,7 +288,8 @@ class TestGetDeckJobStatus:
         job_id = uuid.uuid4()
         mock_repo = AsyncMock()
         mock_repo.get_job.return_value = {
-            "id": job_id, "status": "completed", "cost_cents": 5, "created_at": _NOW, "llm_provider": "gemini",
+            "id": job_id, "status": "completed", "cost_cents": 5, "created_at": _NOW,
+            "llm_provider": "gemini", "apply_style_guardrails": True,
         }
         mock_repo.get_steps.return_value = []
         with (
