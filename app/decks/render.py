@@ -46,6 +46,16 @@ def _render_block(block: Block, *, panel_style: str | None = None, arrangement: 
         cite = f"<cite>— {escape(block.attribution)}</cite>" if block.attribution else ""
         return Markup(f"<blockquote>{escape(block.text)}{cite}</blockquote>")
 
+    if block.type == "table":
+        header_cells = "".join(f"<th>{escape(h)}</th>" for h in block.headers)
+        body_rows = "".join(
+            "<tr>" + "".join(f"<td>{escape(cell)}</td>" for cell in row) + "</tr>" for row in block.rows
+        )
+        return Markup(
+            f"<table class='data-table'><thead><tr>{header_cells}</tr></thead>"
+            f"<tbody>{body_rows}</tbody></table>"
+        )
+
     if block.type == "panels":
         panel_modifier = f" panel-card--{panel_style}" if panel_style else ""
         cards = "".join(

@@ -3,7 +3,8 @@ QA visual — fatia 7. Checks determinísticos, sem IA e sem custo (decisão do
 usuário em 2026-08-18: preferir isso a uma revisão via LLM, que custaria
 token por slide e traria mais uma dependência de quota como a da fatia 6).
 
-Quatro checks, cada um cobrindo um jeito real do deck sair errado:
+Cinco checks, cada um cobrindo um jeito real do deck sair errado (ou, no
+caso do 5º, uma escolha que vale a pena revisar):
   1. Overflow de texto — conteúdo maior que a caixa fixa do slide (1280x720),
      medido de verdade no Chromium via Playwright (mesma técnica de
      diagrams.py), não estimado por contagem de caracteres.
@@ -21,6 +22,11 @@ Quatro checks, cada um cobrindo um jeito real do deck sair errado:
      então conteúdo curto empurra ela pra baixo e sobra um vão no meio).
      Medido de verdade no Chromium — maior distância entre dois elementos
      consecutivos dentro de `.infographic__content`.
+  5. Sugestão de layout (2026-08-24, Fatia C) — compara o layout escolhido
+     pelo LLM contra o que o classificador determinístico (`layout_classifier.py`)
+     sugeriria pras mesmas características de conteúdo (imagem/diagrama/
+     painéis/nº de blocos). Puramente informativo — não é erro, é um sinal
+     auditável pra quem for revisar o resultado.
 
 Decisão do usuário (2026-08-18): isso é só um AVISO, nunca bloqueia o job —
 mesma filosofia de resiliência do resto do pipeline (assets quebrados também
@@ -28,6 +34,7 @@ nunca derrubam o job inteiro). Quem decide o que fazer com os `issues` é o
 frontend, lendo o `output_ref` desta etapa.
 """
 
+from app.decks.layout_classifier import CLASSIFIABLE_LAYOUTS, classify
 from app.decks.models import DeckSpec, Theme
 from app.decks.render import render_deck_html
 from playwright.async_api import async_playwright
@@ -194,9 +201,39 @@ async def _check_sparse_layout(html: str) -> list[dict]:
     ]
 
 
+def _check_layout_suggestion(deck: DeckSpec) -> list[dict]:
+    """
+    5º check (Fatia C, 2026-08-24) — compara o layout que o LLM escolheu
+    contra o que `layout_classifier.py::classify` sugeriria pras mesmas
+    características de conteúdo. Só avisa quando o layout ESCOLHIDO já é um
+    dos "classificáveis" (`title-bullets`/`diagram-full`/`infographic`) —
+    `cover`/`section-break`/`closing`/`two-column` são escolhas fora do
+    escopo do classificador (ver docstring de layout_classifier.py), nunca
+    geram aviso aqui.
+    """
+    issues = []
+    for slide in deck.slides:
+        if slide.layout not in CLASSIFIABLE_LAYOUTS:
+            continue
+        suggested = classify(slide)
+        if suggested != slide.layout:
+            issues.append(
+                {
+                    "slide_id": slide.id,
+                    "kind": "layout_suggestion",
+                    "message": (
+                        f"Layout escolhido foi '{slide.layout.value}', mas as características deste "
+                        f"slide (imagem/diagrama/painéis, nº de blocos) combinam mais com "
+                        f"'{suggested.value}' — só um sinal informativo, não é erro."
+                    ),
+                }
+            )
+    return issues
+
+
 async def check_deck(deck: DeckSpec) -> dict:
     """
-    Roda os quatro checks e devolve um relatório agregado — nunca levanta
+    Roda os cinco checks e devolve um relatório agregado — nunca levanta
     exceção por causa de um PROBLEMA encontrado (isso é o ponto: são avisos,
     não falhas). Só propaga exceção se algo realmente quebrar na checagem em
     si (ex.: Chromium não sobe) — aí sim é uma falha real da etapa `qa`.
@@ -207,5 +244,6 @@ async def check_deck(deck: DeckSpec) -> dict:
         *_check_unresolved_assets(deck),
         *(await _check_overflow(html)),
         *(await _check_sparse_layout(html)),
+        *_check_layout_suggestion(deck),
     ]
     return {"issues": issues, "issue_count": len(issues)}

@@ -37,12 +37,13 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
+from uuid import UUID
 
 import asyncpg
 from pydantic import ValidationError
 
 from app.decks.llm.client import LLMError, generate_text
-from app.decks.models import DeckSpec
+from app.decks.models import DeckSpec, Theme
 
 logger = logging.getLogger(__name__)
 
@@ -163,11 +164,38 @@ _COMPOSITION_GUIDE = """Peças de composição do layout "infographic" — pra c
 Cada campo é INDEPENDENTE dos outros — combine livremente. Não repita sempre a mesma combinação em todos os slides do deck; varie de acordo com o que cada conteúdo pede (ex.: um slide de comparação pede arrangement="comparison-columns"; um slide de processo em etapas pede "sequence-numbered"). Se não tiver certeza, pode deixar um campo de fora (fica com o padrão) — mas evite deixar TODOS de fora em todos os slides, isso é o comportamento antigo que a gente está deixando pra trás."""
 
 
+async def _fetch_fixed_theme(theme_id: UUID, conn: asyncpg.Connection) -> Theme:
+    """
+    Busca um tema salvo na Theme Library (Fatia A, 2026-08-24 — ver
+    theme_repository.py/schema.sql) pra sobrescrever o que o LLM produzir em
+    `deck.theme`. `enforce_dark_background=False` de propósito na leitura: a
+    regra de fundo escuro é o guardrail de ESTILO do LLM improvisando — um
+    tema salvo é escolha humana intencional, já aceita na hora da criação
+    (`POST /decks/themes`, mesma decisão), não passa de novo por essa opinião
+    aqui. O validador de contraste (legibilidade) continua rodando sempre,
+    dentro de `Theme.model_validate`, independente do contexto.
+    """
+    row = await conn.fetchrow(
+        "SELECT palette, font_stack, logo_url FROM deck_themes WHERE id = $1", theme_id
+    )
+    if row is None:
+        raise ValueError(f"Tema {theme_id} não encontrado na Theme Library.")
+    return Theme.model_validate(
+        {
+            "palette": json.loads(row["palette"]),
+            "font_stack": row["font_stack"],
+            "logo_url": row["logo_url"],
+        },
+        context={"enforce_dark_background": False},
+    )
+
+
 def _build_prompt(
     editorial_text: str,
     previous_error: Optional[str] = None,
     *,
     apply_style_guardrails: bool = False,
+    theme_is_fixed: bool = False,
 ) -> str:
     """
     `apply_style_guardrails` (2026-08-21, tarefa 1 — checkbox na tela):
@@ -218,6 +246,29 @@ Replique esse vocabulário visual sempre que o conteúdo do editorial pedir trat
         illustration_rule = 'Ilustração é opcional — inclua um bloco "asset" só quando o conteúdo do slide pedir, decida livremente o estilo/composição da descrição.'
         background_rule = ""  # sem guardrail de estilo, sem exigência de fundo escuro — vale o que o editorial pedir (ou o LLM escolher livremente)
 
+    # Theme Library (2026-08-24, Fatia A): quando o job já tem `theme_id`, a
+    # identidade visual vem de um tema salvo — `generate_deck_structure`
+    # sobrescreve `deck.theme` depois da validação, então o valor que o LLM
+    # escrever aqui é descartado. Ainda assim o schema exige o campo
+    # preenchido (JSON válido), então só simplificamos a instrução — sem
+    # pedir pra "escolher" nada, economiza atenção/tokens do modelo.
+    if theme_is_fixed:
+        theme_rule = (
+            'O campo "theme" é obrigatório no schema, mas a identidade visual deste deck JÁ ESTÁ '
+            "definida por um tema fixo (a paleta e a fonte serão substituídas automaticamente depois "
+            'da sua resposta) — preencha "theme" com qualquer paleta/fonte plausível só pra satisfazer '
+            "o schema, sem gastar esforço pensando nessa escolha; foque toda sua atenção no conteúdo e "
+            "no layout de cada slide."
+        )
+    else:
+        theme_rule = (
+            "Escolha UMA paleta de cores (theme.palette, hexadecimal, com bom contraste texto/fundo) e "
+            "UMA fonte (theme.font_stack) pro deck inteiro, coerentes com o tom do conteúdo — e mantenha "
+            "essa mesma identidade visual em todas as descrições de ilustração que você escrever (mesma "
+            "paleta/estilo mencionados em cada prompt de imagem), pra o deck inteiro parecer um conjunto "
+            f"único, não slides desconexos.{background_rule}"
+        )
+
     return f"""Você transforma um editorial de apresentação (texto livre, escrito por um humano) num documento estruturado (DeckSpec).
 
 {style_block}
@@ -230,7 +281,8 @@ Regras:
 - {illustration_rule} Quando incluir, escreva uma descrição rica (composição, metáfora visual pro conceito do slide, estilo) em "asset" com kind="image", ou kind="diagram" (sintaxe Mermaid) quando o conteúdo for um fluxo/processo.
 - Quando usar o layout "infographic": preencha "eyebrow" (categoria curta, ex.: "Gestão de Capital Humano | Retenção"), o primeiro bloco do "body" deve ser um parágrafo curto (subtítulo), e inclua um bloco "panels" com 2 a 4 painéis (cada um com heading curto + texto curto) resumindo os pontos-chave. Preencha "citation" com uma referência plausível a um framework/teoria de negócio real, no mesmo espírito dos exemplos (não precisa ser literal, mas precisa soar como uma citação real de gestão/economia/estratégia).
 - Se o editorial descrever um fluxo, processo, arquitetura ou relação entre etapas que fique mais claro como diagrama do que como texto, inclua um bloco "asset" com kind="diagram" e ref = a definição desse diagrama em sintaxe Mermaid válida (ex.: "flowchart LR\\nA[Início] --> B[Meio] --> C[Fim]"), usando sempre um tipo simples de diagrama (flowchart ou sequenceDiagram) — nunca invente sintaxe fora do Mermaid.
-- Escolha UMA paleta de cores (theme.palette, hexadecimal, com bom contraste texto/fundo) e UMA fonte (theme.font_stack) pro deck inteiro, coerentes com o tom do conteúdo — e mantenha essa mesma identidade visual em todas as descrições de ilustração que você escrever (mesma paleta/estilo mencionados em cada prompt de imagem), pra o deck inteiro parecer um conjunto único, não slides desconexos.{background_rule}
+- Se o conteúdo do slide for genuinamente tabular (comparação de métricas, antes/depois, linhas com colunas fixas — não uma lista simples de pontos), use um bloco do tipo "table" (headers + rows, cada linha com o mesmo número de células dos headers) em vez de "bullets" ou "panels" — isso vira uma tabela nativa e editável no PDF/PPTX, não texto solto. Prefira nos layouts "title-bullets" ou "diagram-full"; ainda não tem suporte visual dedicado em "two-column"/"infographic".
+- {theme_rule}
 - Responda APENAS com JSON válido, sem markdown, sem texto fora do JSON, seguindo este schema exatamente:
 
 {schema}
@@ -275,6 +327,7 @@ async def generate_deck_structure(
     *,
     preferred_provider: Optional[str] = None,
     apply_style_guardrails: bool = False,
+    theme_id: Optional[UUID] = None,
 ) -> tuple[DeckSpec, int, int]:
     """
     Chama o LLM pra transformar o editorial em `DeckSpec`. Retenta até
@@ -300,6 +353,13 @@ async def generate_deck_structure(
     entram na chamada, pra não enviesar visualmente um pedido que é pra
     ser livre de opinião nossa de estilo.
 
+    `theme_id` (2026-08-24, Fatia A — Theme Library): quando informado, a
+    paleta/fonte fixa salva é buscada UMA vez, antes do loop de tentativas
+    (não precisa buscar de novo a cada retry), e sobrescreve `deck.theme`
+    depois de cada resposta válida do LLM — não depende do LLM "obedecer" a
+    instrução de manter a cor, é substituição programática, garante
+    fidelidade total à marca.
+
     Retorna (deck, tokens_entrada_total, tokens_saida_total).
     """
     total_input_tokens = 0
@@ -307,9 +367,15 @@ async def generate_deck_structure(
     previous_error: Optional[str] = None
     reference_images = _load_fewshot_images() if apply_style_guardrails else []
     validation_context = {"enforce_dark_background": apply_style_guardrails}
+    fixed_theme = await _fetch_fixed_theme(theme_id, conn) if theme_id else None
 
     for attempt in range(1, MAX_STRUCTURE_ATTEMPTS + 1):
-        prompt = _build_prompt(editorial_text, previous_error, apply_style_guardrails=apply_style_guardrails)
+        prompt = _build_prompt(
+            editorial_text,
+            previous_error,
+            apply_style_guardrails=apply_style_guardrails,
+            theme_is_fixed=fixed_theme is not None,
+        )
 
         try:
             raw_text, input_tok, output_tok = await generate_text(
@@ -334,6 +400,8 @@ async def generate_deck_structure(
         try:
             data = json.loads(_strip_markdown_fences(raw_text))
             deck = DeckSpec.model_validate(data, context=validation_context)
+            if fixed_theme is not None:
+                deck = deck.model_copy(update={"theme": fixed_theme})
             return deck, total_input_tokens, total_output_tokens
         except (json.JSONDecodeError, ValidationError) as exc:
             logger.warning(

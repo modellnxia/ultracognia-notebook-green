@@ -66,7 +66,8 @@ async def run_structure(job_id: UUID, conn: asyncpg.Connection) -> StepResult:
     conteúdo de cada slide, tudo numa chamada só (ver structure.py).
     """
     row = await conn.fetchrow(
-        "SELECT editorial_text, llm_provider, apply_style_guardrails FROM deck_jobs WHERE id = $1", job_id
+        "SELECT editorial_text, llm_provider, apply_style_guardrails, theme_id FROM deck_jobs WHERE id = $1",
+        job_id,
     )
     if row is None:
         raise ValueError(f"Job {job_id} não encontrado.")
@@ -76,6 +77,7 @@ async def run_structure(job_id: UUID, conn: asyncpg.Connection) -> StepResult:
         conn,
         preferred_provider=row["llm_provider"],
         apply_style_guardrails=row["apply_style_guardrails"],
+        theme_id=row["theme_id"],
     )
     output_ref = deck.model_dump_json()
     logger.info(

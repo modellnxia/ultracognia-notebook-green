@@ -22,6 +22,7 @@ class DeckJobRepository:
         client_id: Optional[UUID] = None,
         llm_provider: Optional[str] = None,
         apply_style_guardrails: bool = False,
+        theme_id: Optional[UUID] = None,
     ) -> asyncpg.Record:
         """
         Cria o job (com o editorial colado pelo usuário) e já grava as
@@ -29,19 +30,24 @@ class DeckJobRepository:
         explícita do usuário (combo na tela) — `None` mantém o fallback
         automático de sempre entre os providers ativos. `apply_style_guardrails`
         (2026-08-21): checkbox da tela, liga/desliga o rulebook visual interno.
+        `theme_id` (2026-08-24, Fatia A — Theme Library): quando informado,
+        prende a identidade visual do deck a um tema salvo (`deck_themes`) em
+        vez de deixar o LLM improvisar paleta/fonte — ver
+        `structure.py::_fetch_fixed_theme`.
         """
         async with self.conn.transaction():
             job = await self.conn.fetchrow(
                 """
-                INSERT INTO deck_jobs (user_id, client_id, editorial_text, llm_provider, apply_style_guardrails, status)
-                VALUES ($1, $2, $3, $4, $5, 'pending')
-                RETURNING id, user_id, client_id, editorial_text, llm_provider, apply_style_guardrails, status, cost_cents, created_at
+                INSERT INTO deck_jobs (user_id, client_id, editorial_text, llm_provider, apply_style_guardrails, theme_id, status)
+                VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+                RETURNING id, user_id, client_id, editorial_text, llm_provider, apply_style_guardrails, theme_id, status, cost_cents, created_at
                 """,
                 user_id,
                 client_id,
                 editorial_text,
                 llm_provider,
                 apply_style_guardrails,
+                theme_id,
             )
             for step in STEP_ORDER:
                 await self.conn.execute(

@@ -9,6 +9,7 @@ from app.decks.models import (
     Panel,
     PanelListBlock,
     Slide,
+    TableBlock,
     Theme,
 )
 
@@ -213,6 +214,42 @@ class TestPanelListBlock:
     def test_accepts_two_to_four_panels(self):
         for n in (2, 3, 4):
             PanelListBlock(panels=[Panel(heading=f"H{i}", text="x") for i in range(n)])  # não deve levantar
+
+
+class TestTableBlock:
+    """TableBlock (2026-08-24, Fatia B) — tabela de dados real, cabeçalho + linhas."""
+
+    def test_accepts_matching_header_and_row_lengths(self):
+        block = TableBlock(headers=["Métrica", "Antes", "Depois"], rows=[["Custo", "R$ 100", "R$ 80"]])
+        assert block.type == "table"
+        assert len(block.rows) == 1
+
+    def test_rejects_row_with_wrong_number_of_cells(self):
+        with pytest.raises(ValidationError, match="precisa ter"):
+            TableBlock(headers=["A", "B"], rows=[["só uma célula"]])
+
+    def test_rejects_empty_headers(self):
+        with pytest.raises(ValidationError):
+            TableBlock(headers=[], rows=[["x"]])
+
+    def test_rejects_empty_rows(self):
+        with pytest.raises(ValidationError):
+            TableBlock(headers=["A"], rows=[])
+
+    def test_rejects_more_than_six_headers(self):
+        with pytest.raises(ValidationError):
+            TableBlock(headers=[f"H{i}" for i in range(7)], rows=[[f"v{i}" for i in range(7)]])
+
+    def test_rejects_more_than_twelve_rows(self):
+        with pytest.raises(ValidationError):
+            TableBlock(headers=["A"], rows=[["x"] for _ in range(13)])
+
+    def test_accepts_multiple_rows_and_columns(self):
+        block = TableBlock(
+            headers=["Trimestre", "Receita", "Margem"],
+            rows=[["Q1", "10M", "12%"], ["Q2", "12M", "14%"], ["Q3", "11M", "13%"]],
+        )
+        assert len(block.rows) == 3
 
 
 class TestSlideEyebrowAndCitation:

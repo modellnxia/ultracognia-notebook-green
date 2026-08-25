@@ -1,5 +1,6 @@
 """Integration tests for app/decks/router.py — mesmo padrão de tests/test_routers.py."""
 
+import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -40,7 +41,7 @@ class TestCreateDeckJob:
         mock_repo = AsyncMock()
         mock_repo.create_job.return_value = {
             "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
-            "llm_provider": None, "apply_style_guardrails": False,
+            "llm_provider": None, "apply_style_guardrails": False, "theme_id": None,
         }
         mock_repo.get_steps.return_value = [
             {"step": "structure", "status": "pending", "attempt": 0, "output_ref": None, "error": None}
@@ -61,7 +62,7 @@ class TestCreateDeckJob:
         assert body["status"] == "pending"
         assert body["steps"][0]["step"] == "structure"
         mock_repo.create_job.assert_awaited_once_with(
-            user_id, "editorial colado pelo usuário", None, None, False
+            user_id, "editorial colado pelo usuário", None, None, False, theme_id=None
         )
 
     @pytest.mark.asyncio
@@ -71,7 +72,7 @@ class TestCreateDeckJob:
         mock_repo = AsyncMock()
         mock_repo.create_job.return_value = {
             "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
-            "llm_provider": "deepseek", "apply_style_guardrails": False,
+            "llm_provider": "deepseek", "apply_style_guardrails": False, "theme_id": None,
         }
         mock_repo.get_steps.return_value = []
         with (
@@ -86,7 +87,7 @@ class TestCreateDeckJob:
 
         assert resp.status_code == 201
         assert resp.json()["llm_provider"] == "deepseek"
-        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, "deepseek", False)
+        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, "deepseek", False, theme_id=None)
 
     @pytest.mark.asyncio
     async def test_returns_422_for_unknown_llm_provider(self, app):
@@ -119,7 +120,7 @@ class TestCreateDeckJob:
         mock_repo = AsyncMock()
         mock_repo.create_job.return_value = {
             "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
-            "llm_provider": "openai", "apply_style_guardrails": True,
+            "llm_provider": "openai", "apply_style_guardrails": True, "theme_id": None,
         }
         mock_repo.get_steps.return_value = []
         with (
@@ -146,7 +147,7 @@ class TestCreateDeckJob:
         mock_repo = AsyncMock()
         mock_repo.create_job.return_value = {
             "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
-            "llm_provider": None, "apply_style_guardrails": False,
+            "llm_provider": None, "apply_style_guardrails": False, "theme_id": None,
         }
         mock_repo.get_steps.return_value = []
         with (
@@ -158,7 +159,7 @@ class TestCreateDeckJob:
 
         assert resp.status_code == 201
         assert resp.json()["apply_style_guardrails"] is False
-        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, None, False)
+        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, None, False, theme_id=None)
 
     @pytest.mark.asyncio
     async def test_passes_apply_style_guardrails_false(self, app):
@@ -167,7 +168,7 @@ class TestCreateDeckJob:
         mock_repo = AsyncMock()
         mock_repo.create_job.return_value = {
             "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
-            "llm_provider": None, "apply_style_guardrails": False,
+            "llm_provider": None, "apply_style_guardrails": False, "theme_id": None,
         }
         mock_repo.get_steps.return_value = []
         with (
@@ -182,7 +183,7 @@ class TestCreateDeckJob:
 
         assert resp.status_code == 201
         assert resp.json()["apply_style_guardrails"] is False
-        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, None, False)
+        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, None, False, theme_id=None)
 
     @pytest.mark.asyncio
     async def test_returns_422_when_editorial_text_missing(self, app):
@@ -293,7 +294,7 @@ class TestGetDeckJobStatus:
         mock_repo = AsyncMock()
         mock_repo.get_job.return_value = {
             "id": job_id, "status": "completed", "cost_cents": 5, "created_at": _NOW,
-            "llm_provider": "gemini", "apply_style_guardrails": True,
+            "llm_provider": "gemini", "apply_style_guardrails": True, "theme_id": None,
         }
         mock_repo.get_steps.return_value = []
         with (
@@ -385,3 +386,241 @@ class TestDownloadDeckPdf:
                 resp = await ac.get(f"/decks/{uuid.uuid4()}/download?format=keynote", follow_redirects=False)
 
         assert resp.status_code == 422
+
+
+class TestCreateDeckJobWithThemeId:
+    """Theme Library (2026-08-24, Fatia A) — POST /decks aceita theme_id opcional."""
+
+    @pytest.fixture
+    def app(self):
+        return _make_app()
+
+    @pytest.mark.asyncio
+    async def test_passes_theme_id_through_to_create_job(self, app):
+        job_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        theme_id = uuid.uuid4()
+        mock_repo = AsyncMock()
+        mock_repo.create_job.return_value = {
+            "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
+            "llm_provider": None, "apply_style_guardrails": False, "theme_id": theme_id,
+        }
+        mock_repo.get_steps.return_value = []
+        with (
+            patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()),
+            patch("app.decks.router.DeckJobRepository", return_value=mock_repo),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/decks",
+                    json={"user_id": str(user_id), "editorial_text": "x", "theme_id": str(theme_id)},
+                )
+
+        assert resp.status_code == 201
+        assert resp.json()["theme_id"] == str(theme_id)
+        mock_repo.create_job.assert_awaited_once_with(user_id, "x", None, None, False, theme_id=theme_id)
+
+    @pytest.mark.asyncio
+    async def test_omitting_theme_id_defaults_to_none(self, app):
+        job_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        mock_repo = AsyncMock()
+        mock_repo.create_job.return_value = {
+            "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
+            "llm_provider": None, "apply_style_guardrails": False, "theme_id": None,
+        }
+        mock_repo.get_steps.return_value = []
+        with (
+            patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()),
+            patch("app.decks.router.DeckJobRepository", return_value=mock_repo),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post("/decks", json={"user_id": str(user_id), "editorial_text": "x"})
+
+        assert resp.status_code == 201
+        assert resp.json()["theme_id"] is None
+
+
+_VALID_PALETTE = {"primary": "#3B82F6", "background": "#0D1B2E", "text": "#F2F2F2"}
+
+
+class TestThemeLibraryEndpoints:
+    """
+    Theme Library (2026-08-24, Fatia A). Endpoints atrás de
+    `require_theme_admin_key` — segunda chave, além do x-api-key global
+    (aqui nem entra em jogo: o middleware `validar_acesso` não está montado
+    nesse app de teste, só o router isolado — mesmo padrão do resto deste
+    arquivo).
+    """
+
+    @pytest.fixture
+    def app(self):
+        return _make_app()
+
+    @pytest.mark.asyncio
+    async def test_returns_503_when_admin_key_not_configured(self, app):
+        with patch("app.decks.router.settings.DECKS_THEME_ADMIN_KEY", None):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/decks/themes",
+                    json={"name": "padrao", "palette": _VALID_PALETTE, "font_stack": "Inter"},
+                )
+
+        assert resp.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_returns_403_when_admin_key_header_missing(self, app):
+        with patch("app.decks.router.settings.DECKS_THEME_ADMIN_KEY", "segredo-real"):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/decks/themes",
+                    json={"name": "padrao", "palette": _VALID_PALETTE, "font_stack": "Inter"},
+                )
+
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_returns_403_when_admin_key_wrong(self, app):
+        with patch("app.decks.router.settings.DECKS_THEME_ADMIN_KEY", "segredo-real"):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/decks/themes",
+                    json={"name": "padrao", "palette": _VALID_PALETTE, "font_stack": "Inter"},
+                    headers={"X-Theme-Admin-Key": "chave-errada"},
+                )
+
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_creates_theme_with_correct_admin_key(self, app):
+        theme_id = uuid.uuid4()
+        mock_repo = AsyncMock()
+        mock_repo.create_theme.return_value = {
+            "id": theme_id, "client_id": None, "name": "padrao",
+            "palette": json.dumps(_VALID_PALETTE), "font_stack": "Inter", "logo_url": None,
+            "created_at": _NOW, "updated_at": _NOW,
+        }
+        with (
+            patch("app.decks.router.settings.DECKS_THEME_ADMIN_KEY", "segredo-real"),
+            patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()),
+            patch("app.decks.router.ThemeRepository", return_value=mock_repo),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/decks/themes",
+                    json={"name": "padrao", "palette": _VALID_PALETTE, "font_stack": "Inter"},
+                    headers={"X-Theme-Admin-Key": "segredo-real"},
+                )
+
+        assert resp.status_code == 201
+        assert resp.json()["id"] == str(theme_id)
+        assert resp.json()["palette"] == _VALID_PALETTE
+        mock_repo.create_theme.assert_awaited_once_with("padrao", _VALID_PALETTE, "Inter", None, None)
+
+    @pytest.mark.asyncio
+    async def test_rejects_low_contrast_palette(self, app):
+        """Mesma regra de Theme.background_and_primary_must_be_distinguishable — sempre ativa."""
+        bad_palette = {"primary": "#0A192F", "background": "#081421", "text": "#F2F2F2"}
+        with patch("app.decks.router.settings.DECKS_THEME_ADMIN_KEY", "segredo-real"):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/decks/themes",
+                    json={"name": "padrao", "palette": bad_palette, "font_stack": "Inter"},
+                    headers={"X-Theme-Admin-Key": "segredo-real"},
+                )
+
+        assert resp.status_code == 422
+        assert "contraste baixo demais" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_accepts_light_background_palette(self):
+        """Decisão do usuário (2026-08-24): tema salvo pode ser claro, sem exigir fundo escuro."""
+        light_palette = {"primary": "#0A192F", "background": "#F8FAFC", "text": "#111111"}
+        app = _make_app()
+        mock_repo = AsyncMock()
+        mock_repo.create_theme.return_value = {
+            "id": uuid.uuid4(), "client_id": None, "name": "claro",
+            "palette": json.dumps(light_palette), "font_stack": "Inter", "logo_url": None,
+            "created_at": _NOW, "updated_at": _NOW,
+        }
+        with (
+            patch("app.decks.router.settings.DECKS_THEME_ADMIN_KEY", "segredo-real"),
+            patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()),
+            patch("app.decks.router.ThemeRepository", return_value=mock_repo),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/decks/themes",
+                    json={"name": "claro", "palette": light_palette, "font_stack": "Inter"},
+                    headers={"X-Theme-Admin-Key": "segredo-real"},
+                )
+
+        assert resp.status_code == 201
+
+    @pytest.mark.asyncio
+    async def test_lists_themes_with_correct_admin_key(self, app):
+        theme_id = uuid.uuid4()
+        mock_repo = AsyncMock()
+        mock_repo.list_themes.return_value = [
+            {
+                "id": theme_id, "client_id": None, "name": "padrao",
+                "palette": json.dumps(_VALID_PALETTE), "font_stack": "Inter", "logo_url": None,
+                "created_at": _NOW, "updated_at": _NOW,
+            }
+        ]
+        with (
+            patch("app.decks.router.settings.DECKS_THEME_ADMIN_KEY", "segredo-real"),
+            patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()),
+            patch("app.decks.router.ThemeRepository", return_value=mock_repo),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/decks/themes", headers={"X-Theme-Admin-Key": "segredo-real"})
+
+        assert resp.status_code == 200
+        assert len(resp.json()["themes"]) == 1
+        assert resp.json()["themes"][0]["id"] == str(theme_id)
+
+    @pytest.mark.asyncio
+    async def test_list_themes_filters_by_client_id(self, app):
+        client_id = uuid.uuid4()
+        mock_repo = AsyncMock()
+        mock_repo.list_themes.return_value = []
+        with (
+            patch("app.decks.router.settings.DECKS_THEME_ADMIN_KEY", "segredo-real"),
+            patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()),
+            patch("app.decks.router.ThemeRepository", return_value=mock_repo),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get(
+                    f"/decks/themes?client_id={client_id}", headers={"X-Theme-Admin-Key": "segredo-real"}
+                )
+
+        assert resp.status_code == 200
+        mock_repo.list_themes.assert_awaited_once_with(client_id)
+
+    @pytest.mark.asyncio
+    async def test_list_themes_without_admin_key_returns_403(self, app):
+        with patch("app.decks.router.settings.DECKS_THEME_ADMIN_KEY", "segredo-real"):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/decks/themes")
+
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_get_decks_themes_does_not_collide_with_job_id_route(self, app):
+        """
+        `/decks/themes` precisa casar com a rota literal, não com `/{job_id}`
+        (`themes` não é um UUID válido — sem a ordem certa das rotas, isso
+        daria 422 de validação de UUID em vez de bater no endpoint certo).
+        """
+        mock_repo = AsyncMock()
+        mock_repo.list_themes.return_value = []
+        with (
+            patch("app.decks.router.settings.DECKS_THEME_ADMIN_KEY", "segredo-real"),
+            patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()),
+            patch("app.decks.router.ThemeRepository", return_value=mock_repo),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/decks/themes", headers={"X-Theme-Admin-Key": "segredo-real"})
+
+        assert resp.status_code != 422

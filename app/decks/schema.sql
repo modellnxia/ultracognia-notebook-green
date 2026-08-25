@@ -61,3 +61,27 @@ CREATE INDEX IF NOT EXISTS idx_deck_job_steps_pending
 -- ponta a ponta, OpenAI novo, OpenRouter removido do combo):
 -- INSERT INTO providers (name, url, priority, is_active)
 -- VALUES ('openai', 'https://api.openai.com/v1/chat/completions', 4, true);
+
+-- Theme Library (2026-08-24, Fatia A — resposta ao pedido de arquitetura do
+-- Ramon/TYPOGRAPHOS-Σ: separar "arquétipo" de "identidade de marca"). Tema
+-- nomeado e reaproveitável por client_id — pra um job não depender do LLM
+-- reinventar a paleta a cada geração. `palette` guardado como `text` (JSON
+-- serializado), mesmo padrão de `deck_job_steps.output_ref` — não existe
+-- codec jsonb configurado no asyncpg deste projeto (ver app/core/database.py),
+-- então texto cru é mais simples e consistente do que introduzir tipagem
+-- jsonb pela metade só pra esta tabela.
+CREATE TABLE IF NOT EXISTS deck_themes (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id uuid REFERENCES clients(id),  -- nullable: tema pode não estar ligado a um cliente específico
+    name text NOT NULL,
+    palette text NOT NULL,
+    font_stack text NOT NULL,
+    logo_url text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (client_id, name)
+);
+
+-- Migração manual 2026-08-24 (Fatia A):
+-- ALTER TABLE deck_jobs ADD COLUMN IF NOT EXISTS theme_id uuid REFERENCES deck_themes(id);
+ALTER TABLE deck_jobs ADD COLUMN IF NOT EXISTS theme_id uuid REFERENCES deck_themes(id);

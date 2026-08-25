@@ -9,6 +9,7 @@ real (2026-08-19): a chamada ficava fora do try/except, um único LLMError
 
 import json
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -218,6 +219,12 @@ class TestBuildPromptStyleGuardrailToggle:
         assert "Deep English Prompt" in on_prompt
         assert "Deep English Prompt" in off_prompt
 
+    def test_guardrails_on_and_off_both_mention_table_block(self):
+        """TableBlock (2026-08-24, Fatia B) não é opinião de estilo — sempre ativo."""
+        for flag in (True, False):
+            prompt = structure._build_prompt("editorial", apply_style_guardrails=flag)
+            assert '"table"' in prompt
+
     def test_guardrails_on_and_off_both_include_schema_and_editorial(self):
         # o JSON schema e o editorial em si SEMPRE entram, independente do checkbox
         for flag in (True, False):
@@ -299,3 +306,81 @@ class TestGenerateDeckStructureStyleGuardrailWiring:
 
         # tentou MAX_STRUCTURE_ATTEMPTS vezes, sempre recebendo o mesmo fundo claro
         assert mock_generate.await_count == structure.MAX_STRUCTURE_ATTEMPTS
+
+
+class TestGenerateDeckStructureThemeLibrary:
+    """
+    Theme Library (2026-08-24, Fatia A) — quando `theme_id` é informado, a
+    identidade visual salva SUBSTITUI o que o LLM escrever em `theme`,
+    programaticamente (não depende do LLM "obedecer" instrução nenhuma).
+    """
+
+    def _theme_row(self, palette=None, font_stack="Georgia, serif", logo_url=None):
+        return {
+            "palette": json.dumps(
+                # claro de propósito (contraste alto, mas fundo NÃO escuro) — prova que
+                # o tema salvo não passa pela regra de fundo escuro na leitura (só o
+                # validador de contraste, sempre ativo, que esta paleta já satisfaz).
+                palette or {"primary": "#000000", "background": "#FFFFFF", "text": "#000000"}
+            ),
+            "font_stack": font_stack,
+            "logo_url": logo_url,
+        }
+
+    @pytest.mark.asyncio
+    async def test_theme_id_overrides_whatever_llm_chose(self):
+        """LLM devolve uma paleta escura válida qualquer — o tema salvo (claro, fixo) prevalece."""
+        theme_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow.return_value = self._theme_row()
+        mock_generate = AsyncMock(return_value=(_valid_deck_json(), 1, 1))
+
+        with patch("app.decks.structure.generate_text", mock_generate):
+            deck, *_ = await structure.generate_deck_structure("editorial", conn, theme_id=theme_id)
+
+        assert deck.theme.palette == {"primary": "#000000", "background": "#FFFFFF", "text": "#000000"}
+        assert deck.theme.font_stack == "Georgia, serif"
+
+    @pytest.mark.asyncio
+    async def test_no_theme_id_never_touches_the_connection(self):
+        """Sem theme_id, `_fetch_fixed_theme` nem deve rodar — comportamento de sempre, sem custo extra."""
+        conn = AsyncMock()
+        mock_generate = AsyncMock(return_value=(_valid_deck_json(), 1, 1))
+
+        with patch("app.decks.structure.generate_text", mock_generate):
+            await structure.generate_deck_structure("editorial", conn)
+
+        conn.fetchrow.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_theme_id_not_found_raises(self):
+        theme_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow.return_value = None
+        mock_generate = AsyncMock(return_value=(_valid_deck_json(), 1, 1))
+
+        with patch("app.decks.structure.generate_text", mock_generate):
+            with pytest.raises(ValueError, match=str(theme_id)):
+                await structure.generate_deck_structure("editorial", conn, theme_id=theme_id)
+
+    @pytest.mark.asyncio
+    async def test_fixed_theme_fetched_only_once_across_retries(self):
+        """Retry de formato (JSON quebrado) não deve buscar o tema salvo de novo a cada tentativa."""
+        theme_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow.return_value = self._theme_row()
+        mock_generate = AsyncMock(side_effect=[("json quebrado", 1, 1), (_valid_deck_json(), 1, 1)])
+
+        with patch("app.decks.structure.generate_text", mock_generate):
+            await structure.generate_deck_structure("editorial", conn, theme_id=theme_id)
+
+        assert conn.fetchrow.await_count == 1
+
+    def test_prompt_skips_palette_choice_instruction_when_theme_is_fixed(self):
+        prompt = structure._build_prompt("editorial", theme_is_fixed=True)
+        assert "JÁ ESTÁ" in prompt
+        assert "Escolha UMA paleta" not in prompt
+
+    def test_prompt_asks_for_palette_choice_when_theme_is_not_fixed(self):
+        prompt = structure._build_prompt("editorial", theme_is_fixed=False)
+        assert "Escolha UMA paleta" in prompt

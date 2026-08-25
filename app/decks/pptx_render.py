@@ -27,7 +27,7 @@ from pptx.enum.text import PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
-from app.decks.models import Block, DeckSpec, LayoutId, Panel, Slide
+from app.decks.models import Block, DeckSpec, LayoutId, Panel, Slide, TableBlock
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +145,50 @@ def _write_block(text_frame, block: Block, *, base_size: int, color_hex: str, fi
 
     else:
         logger.warning("Tipo de bloco desconhecido no render PPTX: %r — ignorado.", block.type)
+
+
+def _add_table(
+    slide, block: TableBlock, *, left, top, width, height, background_hex: str, accent_hex: str, fg_hex: str
+) -> None:
+    """
+    Tabela nativa do PowerPoint (2026-08-24, Fatia B) — `python-pptx::add_table`
+    já suportava isso, nunca tínhamos usado (achado comparando com PptxGenJS,
+    que também tem tabela nativa — mas é biblioteca JS, o que importava era a
+    capacidade em si, já disponível na nossa dependência atual). Diferente de
+    `slide.shapes.add_picture`, isso fica editável de verdade no PowerPoint —
+    não é imagem de tabela.
+
+    Cabeçalho com fundo de destaque (accent) pra se diferenciar das linhas de
+    dado, que herdam o fundo do tema — evita brigar com paletas variadas
+    (a IA escolhe livremente a cada deck) sem precisar de uma cor de
+    "superfície" nova no `Theme`.
+    """
+    n_rows = len(block.rows) + 1  # +1 pro cabeçalho
+    n_cols = len(block.headers)
+    graphic_frame = slide.shapes.add_table(n_rows, n_cols, left, top, width, height)
+    table = graphic_frame.table
+
+    for col_idx, header_text in enumerate(block.headers):
+        cell = table.cell(0, col_idx)
+        cell.text = header_text
+        cell.margin_left = cell.margin_right = Inches(0.08)
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = _rgb(accent_hex)
+        run = cell.text_frame.paragraphs[0].runs[0]
+        run.font.size = Pt(11)
+        run.font.bold = True
+        run.font.color.rgb = _rgb(background_hex)
+
+    for row_idx, row in enumerate(block.rows, start=1):
+        for col_idx, cell_text in enumerate(row):
+            cell = table.cell(row_idx, col_idx)
+            cell.text = cell_text
+            cell.margin_left = cell.margin_right = Inches(0.08)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = _rgb(background_hex)
+            run = cell.text_frame.paragraphs[0].runs[0]
+            run.font.size = Pt(10.5)
+            run.font.color.rgb = _rgb(fg_hex)
 
 
 async def _fetch_image_bytes(url: str) -> bytes | None:
@@ -446,12 +490,40 @@ async def _render_slide(prs: Presentation, deck: DeckSpec, slide_spec: Slide) ->
                 _write_block(tf, block, base_size=16, color_hex=fg, first=(j == 0))
 
     elif slide_spec.layout not in _FULLSCREEN_LAYOUTS and slide_spec.body:
+        # TableBlock (2026-08-24, Fatia B) não cabe dentro do text_frame corrido
+        # que `_write_block` escreve (tabela é uma shape própria, não texto) —
+        # separado do resto, escrito abaixo do texto normal. Escopo desta
+        # fatia: só este branch genérico (title-bullets/diagram-full/
+        # section-break com corpo); em two-column e infographic uma
+        # TableBlock cai no `else` de `_write_block` (log + ignorado) —
+        # limitação conhecida, documentada, não implementada ainda.
+        prose_blocks = [b for b in slide_spec.body if b.type != "table"]
+        table_blocks = [b for b in slide_spec.body if b.type == "table"]
+
         body_height = _SLIDE_HEIGHT - Inches(2.3)
         if slide_spec.layout == LayoutId.DIAGRAM_FULL and slide_spec.asset:
             body_height = Inches(1.4)  # deixa espaço pra imagem abaixo
-        tf = _add_textbox(slide, _MARGIN, Inches(1.9), _SLIDE_WIDTH - 2 * _MARGIN, body_height)
-        for j, block in enumerate(slide_spec.body):
-            _write_block(tf, block, base_size=18, color_hex=fg, first=(j == 0))
+        elif table_blocks:
+            # reserva espaço pra tabela abaixo do texto, proporcional ao total
+            # de linhas (cabeçalho + dados) — mesmo raciocínio do espaço
+            # reservado pra imagem em DIAGRAM_FULL, acima.
+            total_table_rows = sum(len(b.rows) + 1 for b in table_blocks)
+            body_height = max(Inches(0.8), body_height - Inches(0.32) * total_table_rows)
+
+        if prose_blocks:
+            tf = _add_textbox(slide, _MARGIN, Inches(1.9), _SLIDE_WIDTH - 2 * _MARGIN, body_height)
+            for j, block in enumerate(prose_blocks):
+                _write_block(tf, block, base_size=18, color_hex=fg, first=(j == 0))
+
+        table_top = Inches(1.9) + body_height + Inches(0.15) if prose_blocks else Inches(1.9)
+        for table_block in table_blocks:
+            table_height = Inches(0.32) * (len(table_block.rows) + 1)
+            _add_table(
+                slide, table_block,
+                left=_MARGIN, top=table_top, width=_SLIDE_WIDTH - 2 * _MARGIN, height=table_height,
+                background_hex=theme.palette["background"], accent_hex=accent, fg_hex=fg,
+            )
+            table_top += table_height + Inches(0.15)
 
     if slide_spec.layout == LayoutId.DIAGRAM_FULL and slide_spec.asset:
         asset = slide_spec.asset

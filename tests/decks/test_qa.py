@@ -164,6 +164,72 @@ class TestCheckDeck:
         assert "unresolved_asset" in kinds
 
 
+class TestCheckLayoutSuggestion:
+    """5º check (2026-08-24, Fatia C) — layout_classifier.py, ver docstring de qa.py."""
+
+    def test_no_issue_when_diagram_full_has_diagram_asset(self):
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[Slide(layout=LayoutId.DIAGRAM_FULL, title="X", asset=SlideAsset(kind="diagram", ref="flowchart LR\nA-->B"))],
+        )
+        assert qa._check_layout_suggestion(deck) == []
+
+    def test_flags_title_bullets_when_content_has_panels(self):
+        """Painéis num slide title-bullets sugerem infographic — divergência real."""
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[
+                Slide(
+                    layout=LayoutId.TITLE_BULLETS, title="X",
+                    body=[PanelListBlock(panels=[Panel(heading="A", text="x"), Panel(heading="B", text="y")])],
+                )
+            ],
+        )
+        issues = qa._check_layout_suggestion(deck)
+        assert len(issues) == 1
+        assert issues[0]["kind"] == "layout_suggestion"
+        assert "infographic" in issues[0]["message"]
+
+    def test_no_issue_when_chosen_layout_matches_suggestion(self):
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[
+                Slide(
+                    layout=LayoutId.INFOGRAPHIC, title="X",
+                    body=[PanelListBlock(panels=[Panel(heading="A", text="x"), Panel(heading="B", text="y")])],
+                )
+            ],
+        )
+        assert qa._check_layout_suggestion(deck) == []
+
+    def test_ignores_positional_layouts_even_with_sparse_content(self):
+        """cover/section-break/closing/two-column ficam fora do escopo do classificador — nunca geram aviso."""
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[
+                Slide(layout=LayoutId.COVER, title="X"),
+                Slide(layout=LayoutId.SECTION_BREAK, title="Y"),
+                Slide(layout=LayoutId.CLOSING, title="Z"),
+                Slide(layout=LayoutId.TWO_COLUMN, title="W", body=[ParagraphBlock(text="a")]),
+            ],
+        )
+        assert qa._check_layout_suggestion(deck) == []
+
+    @pytest.mark.asyncio
+    async def test_included_in_check_deck_report(self):
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[
+                Slide(
+                    layout=LayoutId.TITLE_BULLETS, title="X",
+                    body=[PanelListBlock(panels=[Panel(heading="A", text="x"), Panel(heading="B", text="y")])],
+                )
+            ],
+        )
+        report = await qa.check_deck(deck)
+        assert any(i["kind"] == "layout_suggestion" for i in report["issues"])
+
+
 class TestCheckSparseLayout:
     """
     Check novo (2026-08-21, tarefa 3) — nasceu de um achado real comparando

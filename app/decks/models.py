@@ -209,7 +209,37 @@ class PanelListBlock(BaseModel):
     panels: list[Panel] = Field(min_length=2, max_length=4)
 
 
-Block = Union[HeadingBlock, ParagraphBlock, BulletListBlock, QuoteBlock, PanelListBlock]
+class TableBlock(BaseModel):
+    """
+    Tabela de dados real (2026-08-24, Fatia B) — cabeçalho + linhas,
+    renderizada como `<table>` (HTML/PDF) e tabela nativa do PowerPoint
+    (`python-pptx::add_table`, achado comparando com PptxGenJS — a lib já
+    suportava isso, nunca tínhamos usado). Diferente de `PanelListBlock`
+    (mini-cards heading+texto): isso é pra conteúdo genuinamente tabular —
+    comparação de métricas, antes/depois, linha do tempo com colunas fixas.
+    Disponível em qualquer layout (não é exclusivo do `infographic`).
+    """
+
+    type: Literal["table"] = "table"
+    headers: list[str] = Field(min_length=1, max_length=6)
+    rows: list[list[str]] = Field(min_length=1, max_length=12)
+
+    @field_validator("rows")
+    @classmethod
+    def rows_must_match_header_length(cls, v: list[list[str]], info: ValidationInfo) -> list[list[str]]:
+        headers = info.data.get("headers")
+        if headers is None:
+            return v  # headers já falhou validação própria — não duplica o erro aqui
+        bad_row = next((row for row in v if len(row) != len(headers)), None)
+        if bad_row is not None:
+            raise ValueError(
+                f"cada linha de 'rows' precisa ter {len(headers)} célula(s), igual a 'headers' "
+                f"— encontrada linha com {len(bad_row)}: {bad_row!r}"
+            )
+        return v
+
+
+Block = Union[HeadingBlock, ParagraphBlock, BulletListBlock, QuoteBlock, PanelListBlock, TableBlock]
 
 
 class SlideAsset(BaseModel):

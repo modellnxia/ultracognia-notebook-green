@@ -32,6 +32,7 @@ class TestRunStructure:
                 "editorial_text": "editorial colado pelo usuário",
                 "llm_provider": None,
                 "apply_style_guardrails": True,
+                "theme_id": None,
             }
         )
         deck = _valid_deck()
@@ -43,7 +44,11 @@ class TestRunStructure:
             output_ref, input_tok, output_tok, cost = await steps.run_structure(job_id, conn)
 
         m_generate.assert_awaited_once_with(
-            "editorial colado pelo usuário", conn, preferred_provider=None, apply_style_guardrails=True
+            "editorial colado pelo usuário",
+            conn,
+            preferred_provider=None,
+            apply_style_guardrails=True,
+            theme_id=None,
         )
         assert json.loads(output_ref) == json.loads(deck.model_dump_json())
         assert (input_tok, output_tok, cost) == (100, 200, 0)
@@ -53,7 +58,12 @@ class TestRunStructure:
         job_id = uuid.uuid4()
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
-            return_value={"editorial_text": "editorial", "llm_provider": "deepseek", "apply_style_guardrails": False}
+            return_value={
+                "editorial_text": "editorial",
+                "llm_provider": "deepseek",
+                "apply_style_guardrails": False,
+                "theme_id": None,
+            }
         )
         deck = _valid_deck()
 
@@ -64,8 +74,32 @@ class TestRunStructure:
             await steps.run_structure(job_id, conn)
 
         m_generate.assert_awaited_once_with(
-            "editorial", conn, preferred_provider="deepseek", apply_style_guardrails=False
+            "editorial", conn, preferred_provider="deepseek", apply_style_guardrails=False, theme_id=None
         )
+
+    @pytest.mark.asyncio
+    async def test_passes_theme_id_through(self):
+        """Theme Library (2026-08-24, Fatia A)."""
+        job_id = uuid.uuid4()
+        theme_id = uuid.uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            return_value={
+                "editorial_text": "editorial",
+                "llm_provider": None,
+                "apply_style_guardrails": False,
+                "theme_id": theme_id,
+            }
+        )
+        deck = _valid_deck()
+
+        with patch(
+            "app.decks.steps.generate_deck_structure",
+            new=AsyncMock(return_value=(deck, 1, 1)),
+        ) as m_generate:
+            await steps.run_structure(job_id, conn)
+
+        assert m_generate.await_args.kwargs["theme_id"] == theme_id
 
     @pytest.mark.asyncio
     async def test_raises_when_job_not_found(self):

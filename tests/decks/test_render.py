@@ -13,6 +13,7 @@ from app.decks.models import (
     QuoteBlock,
     Slide,
     SlideAsset,
+    TableBlock,
     Theme,
 )
 from app.decks.render import render_deck_html
@@ -96,6 +97,57 @@ class TestBlockRendering:
         html = render_deck_html(deck)
         assert "<blockquote>Só a frase</blockquote>" in html
         assert "<cite>" not in html
+
+
+class TestTableBlockRendering:
+    """TableBlock (2026-08-24, Fatia B) — vira <table> real, não texto solto."""
+
+    def test_renders_headers_and_rows(self):
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[
+                Slide(
+                    layout=LayoutId.TITLE_BULLETS,
+                    title="Comparação",
+                    body=[TableBlock(headers=["Métrica", "Antes", "Depois"], rows=[["Custo", "R$ 100", "R$ 80"]])],
+                )
+            ],
+        )
+        html = render_deck_html(deck)
+        assert "<table class='data-table'>" in html
+        assert "<th>Métrica</th>" in html
+        assert "<th>Antes</th>" in html
+        assert "<td>Custo</td>" in html
+        assert "<td>R$ 80</td>" in html
+
+    def test_multiple_rows_all_render(self):
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[
+                Slide(
+                    layout=LayoutId.DIAGRAM_FULL,
+                    title="X",
+                    body=[TableBlock(headers=["Trimestre", "Receita"], rows=[["Q1", "10M"], ["Q2", "12M"]])],
+                )
+            ],
+        )
+        html = render_deck_html(deck)
+        assert html.count("<tr>") == 3  # 1 header + 2 linhas de dado
+
+    def test_table_content_is_html_escaped(self):
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[
+                Slide(
+                    layout=LayoutId.TITLE_BULLETS,
+                    title="X",
+                    body=[TableBlock(headers=["<script>"], rows=[["<img src=x onerror=alert(1)>"]])],
+                )
+            ],
+        )
+        html = render_deck_html(deck)
+        assert "<script>" not in html
+        assert "<img src=x onerror" not in html
 
 
 class TestSecurityEscaping:

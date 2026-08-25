@@ -27,6 +27,7 @@ from app.decks.models import (
     QuoteBlock,
     Slide,
     SlideAsset,
+    TableBlock,
     Theme,
 )
 from app.decks.pptx_render import render_deck_pptx
@@ -352,3 +353,97 @@ class TestCitationStylePptx:
         slide = list(prs.slides)[0]
         all_text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
         assert "Fonte X" in all_text
+
+
+class TestTableBlockPptx:
+    """TableBlock (2026-08-24, Fatia B) — tabela NATIVA (`add_table`), não imagem/texto solto."""
+
+    def _table_shape(self, slide):
+        tables = [sh for sh in slide.shapes if sh.has_table]
+        assert len(tables) == 1, "esperava exatamente 1 shape de tabela no slide"
+        return tables[0].table
+
+    @pytest.mark.asyncio
+    async def test_produces_a_real_table_shape_with_headers_and_rows(self):
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[
+                Slide(
+                    layout=LayoutId.TITLE_BULLETS,
+                    title="Comparação",
+                    body=[TableBlock(headers=["Métrica", "Antes", "Depois"], rows=[["Custo", "R$ 100", "R$ 80"]])],
+                )
+            ],
+        )
+        pptx_bytes = await render_deck_pptx(deck)
+        prs = _reopen(pptx_bytes)
+        table = self._table_shape(list(prs.slides)[0])
+
+        assert len(table.rows) == 2  # 1 cabeçalho + 1 linha de dado
+        assert len(table.columns) == 3
+        assert table.cell(0, 0).text == "Métrica"
+        assert table.cell(0, 2).text == "Depois"
+        assert table.cell(1, 0).text == "Custo"
+        assert table.cell(1, 2).text == "R$ 80"
+
+    @pytest.mark.asyncio
+    async def test_prose_block_before_table_still_renders(self):
+        """TableBlock convive com blocos de texto normais no mesmo slide."""
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[
+                Slide(
+                    layout=LayoutId.TITLE_BULLETS,
+                    title="X",
+                    body=[
+                        ParagraphBlock(text="Um resumo antes da tabela."),
+                        TableBlock(headers=["A", "B"], rows=[["1", "2"]]),
+                    ],
+                )
+            ],
+        )
+        pptx_bytes = await render_deck_pptx(deck)
+        slide = list(_reopen(pptx_bytes).slides)[0]
+
+        all_text = "\n".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+        assert "Um resumo antes da tabela." in all_text
+        self._table_shape(slide)  # não levanta — a tabela também está lá
+
+    @pytest.mark.asyncio
+    async def test_multiple_rows_all_present(self):
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[
+                Slide(
+                    layout=LayoutId.DIAGRAM_FULL,
+                    title="X",
+                    body=[TableBlock(headers=["Trimestre", "Receita"], rows=[["Q1", "10M"], ["Q2", "12M"], ["Q3", "11M"]])],
+                )
+            ],
+        )
+        pptx_bytes = await render_deck_pptx(deck)
+        table = self._table_shape(list(_reopen(pptx_bytes).slides)[0])
+
+        assert len(table.rows) == 4  # 1 cabeçalho + 3 linhas
+        assert table.cell(3, 0).text == "Q3"
+
+    @pytest.mark.asyncio
+    async def test_table_in_two_column_is_skipped_gracefully(self):
+        """
+        Limitação conhecida e documentada (Fatia B): two-column não tem
+        suporte a TableBlock ainda — não deve quebrar o render, só ignora
+        (mesmo comportamento de qualquer bloco não tratado em `_write_block`).
+        """
+        deck = DeckSpec(
+            theme=_theme(),
+            slides=[
+                Slide(
+                    layout=LayoutId.TWO_COLUMN,
+                    title="X",
+                    body=[ParagraphBlock(text="Coluna A"), TableBlock(headers=["A"], rows=[["1"]])],
+                )
+            ],
+        )
+        pptx_bytes = await render_deck_pptx(deck)  # não deve levantar exceção
+        prs = _reopen(pptx_bytes)
+        assert len(list(prs.slides)) == 1

@@ -67,8 +67,9 @@ class TestCreateJob:
         await repo.create_job(user_id, "texto colado")
 
         insert_args = conn.fetchrow.call_args.args
-        # ordem do INSERT: user_id, client_id, editorial_text, llm_provider, apply_style_guardrails
-        assert insert_args[-2] is None  # llm_provider
+        # ordem do INSERT: user_id, client_id, editorial_text, llm_provider,
+        # apply_style_guardrails, theme_id (2026-08-24, Fatia A — novo último parâmetro)
+        assert insert_args[-3] is None  # llm_provider
 
     @pytest.mark.asyncio
     async def test_apply_style_guardrails_defaults_to_false(self):
@@ -87,7 +88,32 @@ class TestCreateJob:
         await repo.create_job(user_id, "texto colado")
 
         insert_args = conn.fetchrow.call_args.args
-        assert insert_args[-1] is False  # apply_style_guardrails é o último parâmetro do INSERT
+        assert insert_args[-2] is False  # apply_style_guardrails
+
+    @pytest.mark.asyncio
+    async def test_theme_id_defaults_to_none(self):
+        """Theme Library (2026-08-24, Fatia A) — omitir mantém o LLM decidindo, como sempre."""
+        conn = _mock_transaction_conn()
+        job_id, user_id = uuid.uuid4(), uuid.uuid4()
+        conn.fetchrow.return_value = {"id": job_id, "theme_id": None}
+        repo = DeckJobRepository(conn)
+
+        await repo.create_job(user_id, "texto colado")
+
+        insert_args = conn.fetchrow.call_args.args
+        assert insert_args[-1] is None  # theme_id, novo último parâmetro do INSERT
+
+    @pytest.mark.asyncio
+    async def test_passes_theme_id_to_insert(self):
+        conn = _mock_transaction_conn()
+        job_id, user_id, theme_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        conn.fetchrow.return_value = {"id": job_id, "theme_id": theme_id}
+        repo = DeckJobRepository(conn)
+
+        await repo.create_job(user_id, "texto colado", theme_id=theme_id)
+
+        insert_args = conn.fetchrow.call_args.args
+        assert insert_args[-1] == theme_id
 
     @pytest.mark.asyncio
     async def test_passes_apply_style_guardrails_false(self):
@@ -99,7 +125,7 @@ class TestCreateJob:
         await repo.create_job(user_id, "texto colado", apply_style_guardrails=False)
 
         insert_args = conn.fetchrow.call_args.args
-        assert insert_args[-1] is False
+        assert insert_args[-2] is False  # apply_style_guardrails (theme_id é o novo último parâmetro)
 
 
 class TestListJobsForUser:
