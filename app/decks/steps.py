@@ -25,17 +25,18 @@ logger = logging.getLogger(__name__)
 StepResult = tuple[str, int, int, int]  # (output_ref, input_tokens, output_tokens, cost_cents)
 StepExecutor = Callable[[UUID, asyncpg.Connection], Awaitable[StepResult]]
 
-# Peça central da tarefa 2 (2026-08-21) — cada opção do combo é travada
-# ponta a ponta: Gemini escolhido usa Gemini pra texto E imagem; DeepSeek e
-# OpenAI (escolhidos) usam OpenAI pra imagem (DeepSeek não tem produto de
-# imagem próprio). `run_assets` usa isso pra decidir o provider por job —
-# substitui o antigo comportamento de sempre olhar só a env var
-# `DECK_IMAGE_PROVIDER` fixa, que não sabia qual `llm_provider` o job tinha
-# escolhido.
+# Peça central da tarefa 2 (2026-08-21, OpenRouter reativado em 2026-08-27)
+# — cada opção do combo é travada ponta a ponta: Gemini/OpenAI/OpenRouter
+# escolhidos usam o próprio provider pra texto E imagem; DeepSeek (não tem
+# produto de imagem próprio) usa OpenAI pra imagem. `run_assets` usa isso
+# pra decidir o provider por job — substitui o antigo comportamento de
+# sempre olhar só a env var `DECK_IMAGE_PROVIDER` fixa, que não sabia qual
+# `llm_provider` o job tinha escolhido.
 _IMAGE_PROVIDER_BY_LLM_PROVIDER = {
     "gemini": "gemini",
     "deepseek": "openai",
     "openai": "openai",
+    "openrouter": "openrouter",
 }
 
 

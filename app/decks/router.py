@@ -52,14 +52,15 @@ class CreateDeckJobRequest(BaseModel):
     user_id: UUID
     editorial_text: str = Field(min_length=1, description="Editorial colado pelo usuário no chat")
     client_id: Optional[UUID] = None
-    llm_provider: Optional[Literal["gemini", "deepseek", "openai"]] = Field(
+    llm_provider: Optional[Literal["gemini", "deepseek", "openai", "openrouter"]] = Field(
         default=None,
         description=(
             "Escolha explícita do combo na tela — cada opção roda ponta a ponta num provider só, "
-            "texto E imagem (2026-08-21): 'gemini' usa Gemini pros dois; 'deepseek' usa DeepSeek pro "
-            "texto + OpenAI pra imagem (DeepSeek não tem produto de imagem); 'openai' usa OpenAI pros "
-            "dois. 'openrouter' foi removido do combo (decisão do usuário, 2026-08-21). Omitir = "
-            "fallback automático de sempre entre os providers ativos, imagem cai no default da env var."
+            "texto E imagem: 'gemini' usa Gemini pros dois; 'deepseek' usa DeepSeek pro texto + OpenAI "
+            "pra imagem (DeepSeek não tem produto de imagem); 'openai' usa OpenAI pros dois; "
+            "'openrouter' usa OpenRouter pros dois (reativado no combo em 2026-08-27 — chave nova do "
+            "cliente, com endpoint de imagem próprio, validado manualmente). Omitir = fallback "
+            "automático de sempre entre os providers ativos, imagem cai no default da env var."
         ),
     )
     apply_style_guardrails: bool = Field(

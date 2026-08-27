@@ -38,6 +38,17 @@ class TestGenerateImageDispatch:
         m_openai.assert_awaited_once_with("prompt")
 
     @pytest.mark.asyncio
+    async def test_routes_to_openrouter_when_configured(self, monkeypatch):
+        """OpenRouter reativado em 2026-08-27 — ver docstring do módulo."""
+        monkeypatch.setenv("DECK_IMAGE_PROVIDER", "openrouter")
+        with patch(
+            "app.decks.llm.images._generate_image_openrouter",
+            new=AsyncMock(return_value=(b"x", "image/png")),
+        ) as m_openrouter:
+            await images.generate_image("prompt")
+        m_openrouter.assert_awaited_once_with("prompt")
+
+    @pytest.mark.asyncio
     async def test_raises_for_unknown_provider(self, monkeypatch):
         monkeypatch.setenv("DECK_IMAGE_PROVIDER", "midjourney")
         with pytest.raises(images.ImageGenerationError, match="midjourney"):
@@ -170,3 +181,86 @@ class TestGenerateImageOpenai:
         with patch("app.decks.llm.images.httpx.AsyncClient", return_value=fake_client):
             with pytest.raises(images.ImageGenerationError, match="não retornou nenhuma imagem"):
                 await images._generate_image_openai("um gato programando")
+
+
+class TestGenerateImageOpenrouter:
+    """
+    Provider reativado em 2026-08-27 — chave nova do cliente, endpoint
+    dedicado de imagem (`/api/v1/images`, distinto do chat/completions).
+    Validado manualmente com chave real antes de entrar em produção (imagem
+    de teste real gerada e conferida à mão — triângulo azul, exatamente o
+    prompt de teste).
+    """
+
+    @pytest.mark.asyncio
+    async def test_raises_when_api_key_missing(self, monkeypatch):
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+        with pytest.raises(images.ImageGenerationError, match="OPENROUTER_API_KEY"):
+            await images._generate_image_openrouter("um gato programando")
+
+    @pytest.mark.asyncio
+    async def test_decodes_b64_image_from_response(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        raw_bytes = b"\x89PNG\r\n\x1a\nfake-png-bytes"
+        b64 = base64.b64encode(raw_bytes).decode()
+
+        fake_response = MagicMock()
+        fake_response.raise_for_status = MagicMock()
+        fake_response.json.return_value = {"data": [{"b64_json": b64, "media_type": "image/png"}]}
+        fake_client = _fake_async_client(fake_response)
+
+        with patch("app.decks.llm.images.httpx.AsyncClient", return_value=fake_client):
+            image_bytes, mime_type = await images._generate_image_openrouter("um gato programando")
+
+        assert image_bytes == raw_bytes
+        assert mime_type == "image/png"
+
+    @pytest.mark.asyncio
+    async def test_sends_default_model_by_default(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        monkeypatch.delenv("OPENROUTER_IMAGE_MODEL", raising=False)
+        raw_bytes = b"fake-bytes"
+        b64 = base64.b64encode(raw_bytes).decode()
+
+        fake_response = MagicMock()
+        fake_response.raise_for_status = MagicMock()
+        fake_response.json.return_value = {"data": [{"b64_json": b64, "media_type": "image/png"}]}
+        fake_client = _fake_async_client(fake_response)
+
+        with patch("app.decks.llm.images.httpx.AsyncClient", return_value=fake_client):
+            await images._generate_image_openrouter("um gato programando")
+
+        sent_json = fake_client.post.call_args.kwargs["json"]
+        assert sent_json["model"] == "google/gemini-2.5-flash-image"
+        assert sent_json["prompt"] == "um gato programando"
+
+    @pytest.mark.asyncio
+    async def test_model_is_configurable_via_env_var(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_IMAGE_MODEL", "openai/gpt-image-1")
+        raw_bytes = b"fake-bytes"
+        b64 = base64.b64encode(raw_bytes).decode()
+
+        fake_response = MagicMock()
+        fake_response.raise_for_status = MagicMock()
+        fake_response.json.return_value = {"data": [{"b64_json": b64, "media_type": "image/png"}]}
+        fake_client = _fake_async_client(fake_response)
+
+        with patch("app.decks.llm.images.httpx.AsyncClient", return_value=fake_client):
+            await images._generate_image_openrouter("prompt")
+
+        assert fake_client.post.call_args.kwargs["json"]["model"] == "openai/gpt-image-1"
+
+    @pytest.mark.asyncio
+    async def test_raises_when_response_has_no_image(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+
+        fake_response = MagicMock()
+        fake_response.raise_for_status = MagicMock()
+        fake_response.json.return_value = {"data": []}
+        fake_client = _fake_async_client(fake_response)
+
+        with patch("app.decks.llm.images.httpx.AsyncClient", return_value=fake_client):
+            with pytest.raises(images.ImageGenerationError, match="não retornou nenhuma imagem"):
+                await images._generate_image_openrouter("um gato programando")

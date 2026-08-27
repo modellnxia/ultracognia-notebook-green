@@ -161,6 +161,25 @@ class TestGenerateTextDispatch:
         assert m_call.call_args.args[4] == [(b"x", "image/png")]
 
     @pytest.mark.asyncio
+    async def test_forwards_images_to_openrouter_vision_capable_provider(self, monkeypatch):
+        """OpenRouter reativado em 2026-08-27 — vision-capable de verdade, validado manualmente."""
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        conn = object()
+        providers = [{"name": "openrouter", "url": "http://openrouter", "priority": 1}]
+
+        with (
+            patch("app.decks.llm.client.list_active_providers", new=AsyncMock(return_value=providers)),
+            patch(
+                "app.decks.llm.client._call_openai_compatible",
+                new=AsyncMock(return_value=("ok", 1, 1)),
+            ) as m_call,
+        ):
+            await client.generate_text("prompt", conn, reference_images=[(b"x", "image/png")])
+
+        m_call.assert_awaited_once()
+        assert m_call.call_args.args[4] == [(b"x", "image/png")]
+
+    @pytest.mark.asyncio
     async def test_raises_when_all_providers_fail(self, monkeypatch):
         monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
         conn = object()

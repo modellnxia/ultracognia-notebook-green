@@ -101,16 +101,33 @@ class TestCreateDeckJob:
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_returns_422_for_openrouter_removed_from_combo(self, app):
-        """OpenRouter foi removido do combo em 2026-08-21 (decisão do usuário) — não é mais aceito."""
-        with patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()):
+    async def test_accepts_openrouter_as_llm_provider_choice(self, app):
+        """
+        OpenRouter reativado no combo em 2026-08-27 — tinha sido removido em
+        2026-08-21 por só ter texto na época; agora o cliente trouxe uma
+        chave nova com acesso ao endpoint de imagem dedicado do OpenRouter,
+        validado manualmente (texto + imagem + visão, os três funcionando).
+        """
+        job_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        mock_repo = AsyncMock()
+        mock_repo.create_job.return_value = {
+            "id": job_id, "status": "pending", "cost_cents": 0, "created_at": _NOW,
+            "llm_provider": "openrouter", "apply_style_guardrails": False, "theme_id": None,
+        }
+        mock_repo.get_steps.return_value = []
+        with (
+            patch("app.decks.router.get_db_conn", side_effect=lambda: _fake_db_conn()),
+            patch("app.decks.router.DeckJobRepository", return_value=mock_repo),
+        ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.post(
                     "/decks",
-                    json={"user_id": str(uuid.uuid4()), "editorial_text": "x", "llm_provider": "openrouter"},
+                    json={"user_id": str(user_id), "editorial_text": "x", "llm_provider": "openrouter"},
                 )
 
-        assert resp.status_code == 422
+        assert resp.status_code == 201
+        assert resp.json()["llm_provider"] == "openrouter"
 
     @pytest.mark.asyncio
     async def test_accepts_openai_as_llm_provider_choice(self, app):

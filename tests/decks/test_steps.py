@@ -363,7 +363,7 @@ class TestRunAssetsImageProviderMapping:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "llm_provider,expected_image_provider",
-        [("gemini", "gemini"), ("deepseek", "openai"), ("openai", "openai")],
+        [("gemini", "gemini"), ("deepseek", "openai"), ("openai", "openai"), ("openrouter", "openrouter")],
     )
     async def test_maps_llm_provider_to_image_provider(self, llm_provider, expected_image_provider):
         job_id = uuid.uuid4()
@@ -410,13 +410,16 @@ class TestRunAssetsImageProviderMapping:
 
     @pytest.mark.asyncio
     async def test_unknown_llm_provider_falls_back_to_env_default(self):
-        """Ex.: job antigo com llm_provider='openrouter' (removido do combo) — não deve quebrar, só cai no default."""
+        """Ex.: job antigo com um llm_provider que não existe mais no combo — não deve quebrar, só cai no default."""
         job_id = uuid.uuid4()
         deck = _valid_deck()
         deck.slides[0].asset = SlideAsset(kind="image", ref="um prompt qualquer")
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(
-            side_effect=[{"output_ref": deck.model_dump_json()}, {"llm_provider": "openrouter", "apply_style_guardrails": False}]
+            side_effect=[
+                {"output_ref": deck.model_dump_json()},
+                {"llm_provider": "provider-descontinuado", "apply_style_guardrails": False},
+            ]
         )
 
         with (

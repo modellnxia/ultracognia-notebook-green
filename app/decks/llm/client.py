@@ -13,9 +13,13 @@ Suporte a imagem de referência (few-shot visual, 2026-08-19 — ver
 structure.py): Gemini sempre teve (nativo). OpenAI ganhou em 2026-08-21 —
 model vision-capable de verdade (`gpt-5.4`, validado manualmente com uma
 imagem real antes de entrar em produção), formato `image_url` com data URI
-base64 dentro do array `content` da mensagem. DeepSeek/OpenRouter continuam
-sem — não são multimodais, as imagens são simplesmente ignoradas (loga
-aviso) se pedidas pra eles.
+base64 dentro do array `content` da mensagem. OpenRouter ganhou em
+2026-08-27 — reativado no combo (removido em 2026-08-21 por só ter texto na
+época; agora tem paridade com os outros: texto + imagem no mesmo provider,
+ver llm/images.py), modelo default (`google/gemini-2.5-flash`) validado
+manualmente como vision-capable de verdade antes de entrar em produção.
+DeepSeek continua sem — não é multimodal, as imagens são simplesmente
+ignoradas (loga aviso) se pedidas pra ele.
 """
 
 import base64
@@ -49,12 +53,12 @@ _OPENAI_COMPAT_DEFAULT_MODEL = {
     "openai": "gpt-5.4",
 }
 
-# Só o OpenAI, entre os três providers OpenAI-compatible, é vision-capable
-# de verdade (validado manualmente, ver docstring do módulo) — DeepSeek/
-# OpenRouter recebem só o texto do prompt mesmo se `reference_images` vier
+# OpenAI e OpenRouter, entre os três providers OpenAI-compatible, são
+# vision-capable de verdade (validado manualmente, ver docstring do módulo)
+# — DeepSeek recebe só o texto do prompt mesmo se `reference_images` vier
 # preenchido (a descrição em texto do padrão visual já cobre esse caso, ver
 # `_FEWSHOT_DESCRIPTION` em structure.py).
-_VISION_CAPABLE_OPENAI_COMPAT_PROVIDERS = {"openai"}
+_VISION_CAPABLE_OPENAI_COMPAT_PROVIDERS = {"openai", "openrouter"}
 
 
 class LLMError(RuntimeError):
@@ -135,9 +139,9 @@ async def generate_text(
       - `preferred_provider=None` (padrão): tenta cada provider ativo em
         ordem de prioridade, cai pro próximo se um falhar — comportamento
         de sempre.
-      - `preferred_provider="gemini"/"deepseek"/"openai"` (combo de escolha na tela —
-        combo de escolha na tela): usa **só** esse provider, sem cair pra
-        outro se falhar. Escolha explícita do usuário pra poder comparar os
+      - `preferred_provider="gemini"/"deepseek"/"openai"/"openrouter"` (combo
+        de escolha na tela): usa **só** esse provider, sem cair pra outro se
+        falhar. Escolha explícita do usuário pra poder comparar os
         providers de verdade — cair silenciosamente pra outro destruiria a
         comparação. Levanta `LLMError` se o provider escolhido não tiver
         chave configurada ou falhar.
@@ -145,10 +149,10 @@ async def generate_text(
     Retorna (texto, tokens_entrada, tokens_saida).
 
     `reference_images`: lista de (bytes, mime_type) — exemplos visuais
-    anexados à chamada (few-shot), só têm efeito no Gemini (ver docstring do
-    módulo) — os outros providers ignoram (o texto do prompt já carrega uma
-    descrição do mesmo padrão visual, ver structure.py, então não ficam sem
-    nenhum guia).
+    anexados à chamada (few-shot). Têm efeito no Gemini, OpenAI e OpenRouter
+    (os três vision-capable, ver `_VISION_CAPABLE_OPENAI_COMPAT_PROVIDERS`)
+    — o DeepSeek ignora (o texto do prompt já carrega uma descrição do
+    mesmo padrão visual, ver structure.py, então não fica sem nenhum guia).
     """
     providers = await list_active_providers(conn)
     if preferred_provider is not None:

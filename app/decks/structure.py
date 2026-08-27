@@ -28,7 +28,16 @@ recebem as imagens (só o Gemini é multimodal aqui, ver llm/client.py) —
 pra não deixar esses dois sem NENHUM guia visual, `_FEWSHOT_DESCRIPTION`
 descreve o mesmo padrão em texto, sempre incluída no prompt. Quando as
 imagens também estão anexadas (Gemini), a descrição em texto só reforça —
-não atrapalha.
+não atrapalha. (Nota histórica: isso mudou depois — ver bullet de
+2026-08-27 abaixo.)
+
+OpenRouter reativado no combo (2026-08-27): removido em 2026-08-21 por só
+ter texto na época; o cliente trouxe uma chave nova com acesso ao endpoint
+de imagem dedicado do OpenRouter (`/api/v1/images`, validado manualmente:
+texto, imagem E visão/multimodal, os três funcionando de verdade). Modelo
+default (`google/gemini-2.5-flash`) confirmado vision-capable — OpenRouter
+agora recebe as imagens de referência normalmente (junto com Gemini e
+OpenAI), só o DeepSeek continua só-texto.
 """
 
 import asyncio
