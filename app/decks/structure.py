@@ -35,9 +35,14 @@ OpenRouter reativado no combo (2026-08-27): removido em 2026-08-21 por só
 ter texto na época; o cliente trouxe uma chave nova com acesso ao endpoint
 de imagem dedicado do OpenRouter (`/api/v1/images`, validado manualmente:
 texto, imagem E visão/multimodal, os três funcionando de verdade). Modelo
-default (`google/gemini-2.5-flash`) confirmado vision-capable — OpenRouter
-agora recebe as imagens de referência normalmente (junto com Gemini e
-OpenAI), só o DeepSeek continua só-texto.
+default (na época, `google/gemini-2.5-flash`) confirmado vision-capable —
+OpenRouter agora recebe as imagens de referência normalmente (junto com
+Gemini e OpenAI), só o DeepSeek continua só-texto.
+
+Modelo de texto do OpenRouter trocado (2026-08-28) pra
+`google/gemini-3.1-pro-preview` — ver llm/client.py pro achado completo
+(a API nativa do Gemini tem esse modelo, mas está bloqueada pela mesma cota
+"FreeTier" de sempre; via OpenRouter funciona de verdade, billing separado).
 """
 
 import asyncio

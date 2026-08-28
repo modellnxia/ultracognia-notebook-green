@@ -265,3 +265,44 @@ class TestGenerateTextPreferredProvider:
         with patch("app.decks.llm.client.list_active_providers", new=AsyncMock(return_value=providers)):
             with pytest.raises(client.LLMError):
                 await client.generate_text("prompt", conn, preferred_provider="deepseek")
+
+
+class TestOpenAiCompatDefaultModels:
+    """
+    Modelo padrão de cada provider OpenAI-compatible — valores validados
+    manualmente antes de virar default (ver docstring do módulo). Trava
+    simples pra não regredir sem querer.
+    """
+
+    def test_openrouter_uses_gemini_3_1_pro_preview(self):
+        """
+        Trocado em 2026-08-28 (pedido do usuário) — o `google/gemini-2.5-flash`
+        anterior foi substituído depois de validar manualmente que
+        `gemini-3.1-pro-preview` funciona via OpenRouter (a API nativa do
+        Gemini tem o mesmo modelo, mas bloqueado pela cota "FreeTier").
+        """
+        assert client._OPENAI_COMPAT_DEFAULT_MODEL["openrouter"] == "google/gemini-3.1-pro-preview"
+
+    def test_openai_uses_gpt_5_4(self):
+        assert client._OPENAI_COMPAT_DEFAULT_MODEL["openai"] == "gpt-5.4"
+
+    def test_deepseek_uses_deepseek_chat(self):
+        assert client._OPENAI_COMPAT_DEFAULT_MODEL["deepseek"] == "deepseek-chat"
+
+    @pytest.mark.asyncio
+    async def test_generate_text_sends_the_new_default_model_to_openrouter(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        conn = object()
+        providers = [{"name": "openrouter", "url": "http://openrouter", "priority": 3}]
+
+        with (
+            patch("app.decks.llm.client.list_active_providers", new=AsyncMock(return_value=providers)),
+            patch(
+                "app.decks.llm.client._call_openai_compatible",
+                new=AsyncMock(return_value=("ok", 1, 1)),
+            ) as m_call,
+        ):
+            await client.generate_text("prompt", conn, preferred_provider="openrouter")
+
+        # assinatura: (url, api_key, model, prompt, [reference_images])
+        assert m_call.call_args.args[2] == "google/gemini-3.1-pro-preview"

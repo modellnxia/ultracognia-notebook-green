@@ -16,10 +16,21 @@ imagem real antes de entrar em produção), formato `image_url` com data URI
 base64 dentro do array `content` da mensagem. OpenRouter ganhou em
 2026-08-27 — reativado no combo (removido em 2026-08-21 por só ter texto na
 época; agora tem paridade com os outros: texto + imagem no mesmo provider,
-ver llm/images.py), modelo default (`google/gemini-2.5-flash`) validado
-manualmente como vision-capable de verdade antes de entrar em produção.
-DeepSeek continua sem — não é multimodal, as imagens são simplesmente
-ignoradas (loga aviso) se pedidas pra ele.
+ver llm/images.py), modelo default validado manualmente como vision-capable
+de verdade antes de entrar em produção. DeepSeek continua sem — não é
+multimodal, as imagens são simplesmente ignoradas (loga aviso) se pedidas
+pra ele.
+
+Modelo de texto do OpenRouter trocado em 2026-08-28 pra
+`google/gemini-3.1-pro-preview` (pedido do usuário) — achado real no
+caminho: a API NATIVA do Gemini (provider "gemini" deste combo) tem esse
+modelo listado, mas a chave atual bate na mesma cota "FreeTier" que já
+travava a geração de imagem (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`,
+limit 0) — dessa vez no tier "pro" de texto também. Via OpenRouter funciona
+de verdade (billing separado, não depende da conta Google do cliente) —
+validado manualmente: texto e visão/multimodal, os dois funcionando.
+Atenção: é um modelo "raciocinador" (usa tokens de `reasoning` internos),
+sai mais caro/lento por chamada que o `gemini-2.5-flash` usado antes.
 """
 
 import base64
@@ -46,10 +57,12 @@ _API_KEY_ENV_BY_PROVIDER = {
 # DeepSeek/OpenRouter/OpenAI exigem um "model" explícito no corpo da
 # requisição — diferente do Gemini, que já embute o modelo na própria URL
 # cadastrada. `gpt-5.4` validado manualmente (chamada real, texto e
-# multimodal) em 2026-08-21 antes de virar default.
+# multimodal) em 2026-08-21 antes de virar default. `google/gemini-3.1-pro-preview`
+# validado manualmente (2026-08-28, ver docstring do módulo) antes de
+# substituir o `google/gemini-2.5-flash` anterior.
 _OPENAI_COMPAT_DEFAULT_MODEL = {
     "deepseek": "deepseek-chat",
-    "openrouter": "google/gemini-2.5-flash",
+    "openrouter": "google/gemini-3.1-pro-preview",
     "openai": "gpt-5.4",
 }
 
