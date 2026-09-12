@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers.report import router as report_router
+from app.routers.notebook_chat import router as notebook_chat_router
 from app.decks.router import router as decks_router
 from app.decks.poller import register_deck_poller
 from app.core.database import create_pool, close_pool
@@ -66,6 +67,7 @@ if settings.ENV == "local":
     )
 
 app.include_router(report_router)
+app.include_router(notebook_chat_router)
 app.include_router(decks_router)
 
 @app.get("/health")
