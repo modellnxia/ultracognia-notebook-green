@@ -5,14 +5,23 @@ NotebookLM. Ver app/services/notebook_chat_service.py pra lógica completa.
 """
 
 import logging
+from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
+from notebooklm.exceptions import ArtifactNotFoundError
 
-from app.models.notebook_chat import NotebookChatRequest, NotebookChatResponse
+from app.models.notebook_chat import (
+    NotebookChatRequest,
+    NotebookChatResponse,
+    NotebookStudioItemsResponse,
+)
 from app.services.notebook_chat_service import (
     AmbiguousNotebookTitleError,
+    ArtifactContentUnavailableError,
     NotebookNotFoundError,
     ask_notebook,
+    get_report_markdown,
+    list_studio_items,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,3 +48,61 @@ async def ask_notebook_endpoint(req: NotebookChatRequest) -> NotebookChatRespons
     except Exception as e:
         logger.exception("Erro ao consultar o notebook via chat")
         raise HTTPException(status_code=500, detail=f"Erro ao consultar o notebook: {str(e)}")
+
+
+@router.get("/studio-items", response_model=NotebookStudioItemsResponse)
+async def list_studio_items_endpoint(notebook_title: str) -> NotebookStudioItemsResponse:
+    """
+    Lista notas e relatórios já existentes na aba Studio do notebook, com o
+    conteúdo já baixado quando possível — a UI escolhe um `id` daqui e
+    chama `GET /notebook-chat/reports/download` com ele pra baixar de
+    verdade (esta rota é só listagem/preview, não é o download final).
+    """
+    logger.info("Listando itens do Studio do notebook '%s'", notebook_title)
+
+    try:
+        return await list_studio_items(notebook_title)
+    except NotebookNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except AmbiguousNotebookTitleError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        logger.exception("Erro ao listar itens do Studio")
+        raise HTTPException(status_code=500, detail=f"Erro ao listar itens do Studio: {str(e)}")
+
+
+@router.get("/reports/download")
+async def download_report_endpoint(notebook_title: str, artifact_id: str) -> Response:
+    """
+    Download do conteúdo (markdown) de UM relatório específico, escolhido
+    pelo `artifact_id` que já vem em `GET /notebook-chat/studio-items`.
+
+    Busca o conteúdo real (caminho oficial da lib + fallback — ver
+    `notebook_chat_service.py::_download_artifact_markdown`) e devolve como
+    arquivo pra download de uma vez só — sem streaming nosso, é a resposta
+    completa (mesmo padrão do resto da API, decisão do usuário).
+    """
+    logger.info("Download pedido — notebook '%s', artifact_id=%s", notebook_title, artifact_id)
+
+    try:
+        content, filename = await get_report_markdown(notebook_title, artifact_id)
+    except NotebookNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except AmbiguousNotebookTitleError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ArtifactNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Relatório não encontrado nesse notebook: {e}")
+    except ArtifactContentUnavailableError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        logger.exception("Erro ao baixar relatório")
+        raise HTTPException(status_code=500, detail=f"Erro ao baixar relatório: {str(e)}")
+
+    # RFC 6266 (filename* com percent-encoding) — títulos reais têm acento
+    # (ex.: "relatório-...") e Content-Disposition clássico não aceita não-ASCII direto.
+    safe_filename = quote(filename)
+    return Response(
+        content=content,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_filename}"},
+    )
