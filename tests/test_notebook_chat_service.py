@@ -9,10 +9,13 @@ from app.services.notebook_chat_service import (
     AmbiguousNotebookTitleError,
     ArtifactContentUnavailableError,
     NotebookNotFoundError,
-    _download_artifact_markdown,
+    _CHAT_TIMEOUT_SECONDS,
+    _download_artifact_content,
     _download_via_raw_url,
+    _ensure_isolated_conversation,
+    _filename_with_extension,
     ask_notebook,
-    get_report_markdown,
+    get_report_content,
     list_studio_items,
 )
 
@@ -31,6 +34,10 @@ def _make_client_mock(notebooks: list, answer: str = "Resposta do NotebookLM.") 
     client = MagicMock()
     client.notebooks.list = AsyncMock(return_value=notebooks)
     client.chat.ask = AsyncMock(return_value=ask_result)
+    # Sem conversa anterior por padrão — isolamento vira no-op na maioria dos
+    # testes que não estão testando isolamento especificamente.
+    client.chat.get_conversation_id = AsyncMock(return_value=None)
+    client.chat.delete_conversation = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
     return client
@@ -111,6 +118,92 @@ class TestAskNotebook:
 
         client.chat.ask.assert_awaited_once_with("nb-1", "pergunta")
 
+    @pytest.mark.asyncio
+    async def test_builds_client_with_extended_chat_timeout(self):
+        """Achado 2026-09-17: 180s (padrão da lib) é curto demais pra prompts pesados — ver _CHAT_TIMEOUT_SECONDS."""
+        client = _make_client_mock([_fake_notebook("nb-1", "X")])
+
+        with patch(
+            "app.services.notebook_chat_service.NotebookLMClient.from_storage", return_value=client
+        ) as m_from_storage:
+            await ask_notebook("X", "pergunta")
+
+        m_from_storage.assert_called_once_with(chat_timeout=_CHAT_TIMEOUT_SECONDS)
+
+    @pytest.mark.asyncio
+    async def test_deletes_previous_conversation_before_asking(self):
+        """Achado 2026-09-17: sem isso, ask() sem conversation_id continua a conversa mais recente, não isola."""
+        client = _make_client_mock([_fake_notebook("nb-1", "X")])
+        client.chat.get_conversation_id = AsyncMock(return_value="conv-antiga")
+
+        with _patch_from_storage(client):
+            await ask_notebook("X", "pergunta")
+
+        client.chat.delete_conversation.assert_awaited_once_with("nb-1", "conv-antiga")
+        client.chat.ask.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_does_not_delete_when_no_previous_conversation(self):
+        client = _make_client_mock([_fake_notebook("nb-1", "X")])
+        client.chat.get_conversation_id = AsyncMock(return_value=None)
+
+        with _patch_from_storage(client):
+            await ask_notebook("X", "pergunta")
+
+        client.chat.delete_conversation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_isolation_failure_does_not_block_the_question(self):
+        """Melhor esforço: se checar/apagar a conversa falhar, a pergunta principal segue mesmo assim."""
+        client = _make_client_mock([_fake_notebook("nb-1", "X")], answer="respondeu mesmo assim")
+        client.chat.get_conversation_id = AsyncMock(side_effect=RuntimeError("falha de rede"))
+
+        with _patch_from_storage(client):
+            result = await ask_notebook("X", "pergunta")
+
+        assert result.answer == "respondeu mesmo assim"
+        client.chat.ask.assert_awaited_once()
+
+
+class TestEnsureIsolatedConversation:
+    @pytest.mark.asyncio
+    async def test_deletes_when_conversation_exists(self):
+        client = MagicMock()
+        client.chat.get_conversation_id = AsyncMock(return_value="conv-1")
+        client.chat.delete_conversation = AsyncMock()
+
+        await _ensure_isolated_conversation(client, "nb-1")
+
+        client.chat.delete_conversation.assert_awaited_once_with("nb-1", "conv-1")
+
+    @pytest.mark.asyncio
+    async def test_noop_when_no_conversation_exists(self):
+        client = MagicMock()
+        client.chat.get_conversation_id = AsyncMock(return_value=None)
+        client.chat.delete_conversation = AsyncMock()
+
+        await _ensure_isolated_conversation(client, "nb-1")
+
+        client.chat.delete_conversation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_swallows_errors_from_get_conversation_id(self):
+        client = MagicMock()
+        client.chat.get_conversation_id = AsyncMock(side_effect=RuntimeError("falhou"))
+        client.chat.delete_conversation = AsyncMock()
+
+        await _ensure_isolated_conversation(client, "nb-1")  # não deve levantar
+
+        client.chat.delete_conversation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_swallows_errors_from_delete_conversation(self):
+        client = MagicMock()
+        client.chat.get_conversation_id = AsyncMock(return_value="conv-1")
+        client.chat.delete_conversation = AsyncMock(side_effect=RuntimeError("falhou"))
+
+        await _ensure_isolated_conversation(client, "nb-1")  # não deve levantar
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # list_studio_items — investigação de 2026-09-14 (base do futuro endpoint de
@@ -118,7 +211,13 @@ class TestAskNotebook:
 # filtro de tipo — list_reports() perde os relatórios gerados por chat,
 # achado real em 2026-09-14, ver docstring do serviço) só traz metadado,
 # o conteúdo é baixado de verdade via download_report()
-# (arquivo temporário, lido de volta como texto).
+# (arquivo temporário, lido de volta como bytes).
+#
+# Achado 2026-09-17: artefatos cujo título termina em .pdf NUNCA têm o
+# download tentado aqui (nem oficial nem fallback) — decisão deliberada,
+# evita (a) devolver conteúdo binário corrompido como se fosse texto, (b)
+# a lentidão de sempre tentar o caminho oficial (que falha) antes do
+# fallback pra um tipo que já sabemos não ser texto.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -270,24 +369,82 @@ class TestListStudioItems:
         assert len(result.reports) == 2
         assert {r.content for r in result.reports} == {"conteúdo 1", "conteúdo 2"}
 
+    @pytest.mark.asyncio
+    async def test_pdf_artifact_never_attempts_download_content_stays_none(self):
+        """Achado 2026-09-17: título .pdf pula o download inteiro — nem oficial nem fallback são tentados."""
+        client = _make_studio_client_mock(
+            [_fake_notebook("nb-1", "X")],
+            report_artifacts=[_fake_report_artifact("pdf-1", "relatorio-diego-operacoes.pdf")],
+        )
+
+        with _patch_from_storage(client):
+            result = await list_studio_items("X")
+
+        assert len(result.reports) == 1
+        assert result.reports[0].content is None
+        client.artifacts.download_report.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_pdf_title_check_is_case_insensitive(self):
+        client = _make_studio_client_mock(
+            [_fake_notebook("nb-1", "X")],
+            report_artifacts=[_fake_report_artifact("pdf-1", "Relatorio.PDF")],
+        )
+
+        with _patch_from_storage(client):
+            result = await list_studio_items("X")
+
+        assert result.reports[0].content is None
+        client.artifacts.download_report.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_binary_fallback_content_is_not_decoded_as_text(self):
+        """
+        Artefato não termina em .pdf (então tenta baixar) mas o mime real
+        devolvido pelo fallback não é texto — content deve ficar None, não
+        uma string corrompida (bug real corrigido em 2026-09-17).
+        """
+        client = _make_studio_client_mock(
+            [_fake_notebook("nb-1", "X")],
+            report_artifacts=[_fake_report_artifact("art-1", "artefato-sem-extensao-reconhecida")],
+            download_side_effect=RuntimeError("oficial sempre falha nesse teste"),
+        )
+
+        with (
+            _patch_from_storage(client),
+            patch(
+                "app.services.notebook_chat_service._download_via_raw_url",
+                new=AsyncMock(return_value=(b"\x25\x50\x44\x46-binario", "application/octet-stream")),
+            ),
+        ):
+            result = await list_studio_items("X")
+
+        assert result.reports[0].content is None
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Download de verdade (2026-09-14/15) — endpoint GET /notebook-chat/reports/download.
-# _download_via_raw_url usa a URL de download que vem na posição [24] da
-# linha bruta de artifacts._list_raw (achado real, não documentado pela lib)
-# — fallback só usado quando o caminho oficial (download_report) falha.
+# Download de verdade (2026-09-14/15, estendido em 2026-09-17 pra binário) —
+# endpoint GET /notebook-chat/reports/download. _download_via_raw_url usa a
+# URL de download que vem na posição [24] da linha bruta de
+# artifacts._list_raw (achado real, não documentado pela lib) — fallback só
+# usado quando o caminho oficial (download_report) falha. Devolve sempre
+# bytes + mime_type, nunca decodifica como texto (serve tanto markdown
+# quanto PDF).
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _raw_artifact_row(artifact_id: str, download_url: str | None = "https://download.url/x") -> list:
+def _raw_artifact_row(
+    artifact_id: str, download_url: str | None = "https://download.url/x", mime: str = "text/markdown"
+) -> list:
     """Linha bruta fake, no formato de artifacts._list_raw — só a posição [24] importa aqui."""
-    tail = [["titulo.md", "text/markdown", "https://viewer.url", download_url]] if download_url else [None]
+    tail = [["titulo.md", mime, "https://viewer.url", download_url]] if download_url else [None]
     return [artifact_id, "titulo.md", 10] + [None] * 21 + tail
 
 
-def _fake_http_response(text: str, raise_error: Exception | None = None) -> MagicMock:
+def _fake_http_response(content: bytes, raise_error: Exception | None = None, headers: dict | None = None) -> MagicMock:
     resp = MagicMock()
-    resp.text = text
+    resp.content = content
+    resp.headers = headers or {}
     if raise_error is not None:
         resp.raise_for_status = MagicMock(side_effect=raise_error)
     else:
@@ -312,14 +469,45 @@ class TestDownloadViaRawUrl:
     async def test_fetches_content_from_url_at_position_24(self):
         client = MagicMock()
         client.artifacts._list_raw = AsyncMock(return_value=[_raw_artifact_row("art-1")])
-        response = _fake_http_response("# conteúdo real do relatório")
+        response = _fake_http_response("# conteúdo real do relatório".encode("utf-8"))
         patch_cookies, patch_http, fake_http_client = _patch_http_get(response)
 
         with patch_cookies, patch_http:
-            content = await _download_via_raw_url(client, "nb-1", "art-1")
+            content, mime_type = await _download_via_raw_url(client, "nb-1", "art-1")
 
-        assert content == "# conteúdo real do relatório"
+        assert content == "# conteúdo real do relatório".encode("utf-8")
+        assert mime_type == "text/markdown"
         fake_http_client.get.assert_awaited_once_with("https://download.url/x")
+
+    @pytest.mark.asyncio
+    async def test_binary_content_passes_through_unmodified(self):
+        """Achado 2026-09-17: PDF (ou qualquer binário) sai de _download_via_raw_url intacto, nunca via .text."""
+        client = MagicMock()
+        client.artifacts._list_raw = AsyncMock(
+            return_value=[_raw_artifact_row("pdf-1", mime="application/pdf")]
+        )
+        pdf_bytes = b"%PDF-1.7 conteudo binario fake \x00\x01\x02"
+        response = _fake_http_response(pdf_bytes)
+        patch_cookies, patch_http, _ = _patch_http_get(response)
+
+        with patch_cookies, patch_http:
+            content, mime_type = await _download_via_raw_url(client, "nb-1", "pdf-1")
+
+        assert content == pdf_bytes
+        assert mime_type == "application/pdf"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_response_headers_when_row_mime_missing(self):
+        client = MagicMock()
+        row = _raw_artifact_row("art-1", mime="")  # mime vazio na linha crua
+        client.artifacts._list_raw = AsyncMock(return_value=[row])
+        response = _fake_http_response(b"conteudo", headers={"content-type": "application/pdf; charset=binary"})
+        patch_cookies, patch_http, _ = _patch_http_get(response)
+
+        with patch_cookies, patch_http:
+            _, mime_type = await _download_via_raw_url(client, "nb-1", "art-1")
+
+        assert mime_type == "application/pdf"
 
     @pytest.mark.asyncio
     async def test_raises_when_artifact_row_not_found(self):
@@ -346,7 +534,7 @@ class TestDownloadViaRawUrl:
             await _download_via_raw_url(client, "nb-1", "art-1")
 
 
-class TestDownloadArtifactMarkdown:
+class TestDownloadArtifactContent:
     @pytest.mark.asyncio
     async def test_uses_official_download_report_when_it_succeeds(self):
         client = MagicMock()
@@ -358,9 +546,10 @@ class TestDownloadArtifactMarkdown:
         client.artifacts.download_report = AsyncMock(side_effect=_fake_download_report)
 
         with patch("app.services.notebook_chat_service._download_via_raw_url", new=AsyncMock()) as m_fallback:
-            content = await _download_artifact_markdown(client, "nb-1", "art-1")
+            content, mime_type = await _download_artifact_content(client, "nb-1", "art-1")
 
-        assert content == "conteúdo oficial"
+        assert content == "conteúdo oficial".encode("utf-8")
+        assert mime_type == "text/markdown"
         m_fallback.assert_not_awaited()  # caminho oficial funcionou — fallback nem deve rodar
 
     @pytest.mark.asyncio
@@ -370,11 +559,12 @@ class TestDownloadArtifactMarkdown:
 
         with patch(
             "app.services.notebook_chat_service._download_via_raw_url",
-            new=AsyncMock(return_value="conteúdo do fallback"),
+            new=AsyncMock(return_value=(b"conteudo do fallback", "application/pdf")),
         ) as m_fallback:
-            content = await _download_artifact_markdown(client, "nb-1", "art-1")
+            content, mime_type = await _download_artifact_content(client, "nb-1", "art-1")
 
-        assert content == "conteúdo do fallback"
+        assert content == b"conteudo do fallback"
+        assert mime_type == "application/pdf"
         m_fallback.assert_awaited_once_with(client, "nb-1", "art-1")
 
     @pytest.mark.asyncio
@@ -387,12 +577,32 @@ class TestDownloadArtifactMarkdown:
             new=AsyncMock(side_effect=ArtifactContentUnavailableError("também falhou")),
         ):
             with pytest.raises(ArtifactContentUnavailableError):
-                await _download_artifact_markdown(client, "nb-1", "art-1")
+                await _download_artifact_content(client, "nb-1", "art-1")
 
 
-class TestGetReportMarkdown:
+class TestFilenameWithExtension:
+    def test_keeps_title_that_already_has_md_extension(self):
+        assert _filename_with_extension("relatorio.md", "text/markdown") == "relatorio.md"
+
+    def test_keeps_title_that_already_has_pdf_extension(self):
+        assert _filename_with_extension("relatorio.pdf", "application/pdf") == "relatorio.pdf"
+
+    def test_extension_check_is_case_insensitive(self):
+        assert _filename_with_extension("Relatorio.PDF", "application/pdf") == "Relatorio.PDF"
+
+    def test_appends_md_extension_derived_from_mime(self):
+        assert _filename_with_extension("Relatório sem extensão", "text/markdown") == "Relatório sem extensão.md"
+
+    def test_appends_pdf_extension_derived_from_mime(self):
+        assert _filename_with_extension("Relatório sem extensão", "application/pdf") == "Relatório sem extensão.pdf"
+
+    def test_unknown_mime_defaults_to_md(self):
+        assert _filename_with_extension("Título qualquer", "application/octet-stream") == "Título qualquer.md"
+
+
+class TestGetReportContent:
     @pytest.mark.asyncio
-    async def test_happy_path_returns_content_and_filename(self):
+    async def test_happy_path_returns_content_filename_and_mime(self):
         artifact = MagicMock()
         artifact.title = "relatorio-andre-gabriel-rh.md"
 
@@ -402,15 +612,37 @@ class TestGetReportMarkdown:
         with (
             _patch_from_storage(client),
             patch(
-                "app.services.notebook_chat_service._download_artifact_markdown",
-                new=AsyncMock(return_value="# conteúdo do relatório"),
+                "app.services.notebook_chat_service._download_artifact_content",
+                new=AsyncMock(return_value=(b"# conteudo do relatorio", "text/markdown")),
             ),
         ):
-            content, filename = await get_report_markdown("Presidencia Funchal", "art-1")
+            content, filename, mime_type = await get_report_content("Presidencia Funchal", "art-1")
 
-        assert content == "# conteúdo do relatório"
+        assert content == b"# conteudo do relatorio"
         assert filename == "relatorio-andre-gabriel-rh.md"  # já tinha .md, não duplica
+        assert mime_type == "text/markdown"
         client.artifacts.get.assert_awaited_once_with("nb-1", "art-1")
+
+    @pytest.mark.asyncio
+    async def test_pdf_artifact_gets_pdf_extension_and_mime(self):
+        artifact = MagicMock()
+        artifact.title = "relatorio-diego-consolidado"  # sem extensão no título
+
+        client = _make_client_mock([_fake_notebook("nb-1", "X")])
+        client.artifacts.get = AsyncMock(return_value=artifact)
+
+        with (
+            _patch_from_storage(client),
+            patch(
+                "app.services.notebook_chat_service._download_artifact_content",
+                new=AsyncMock(return_value=(b"%PDF-1.7 binario", "application/pdf")),
+            ),
+        ):
+            content, filename, mime_type = await get_report_content("X", "pdf-1")
+
+        assert content == b"%PDF-1.7 binario"
+        assert filename == "relatorio-diego-consolidado.pdf"
+        assert mime_type == "application/pdf"
 
     @pytest.mark.asyncio
     async def test_appends_md_extension_when_title_lacks_it(self):
@@ -423,11 +655,11 @@ class TestGetReportMarkdown:
         with (
             _patch_from_storage(client),
             patch(
-                "app.services.notebook_chat_service._download_artifact_markdown",
-                new=AsyncMock(return_value="conteúdo"),
+                "app.services.notebook_chat_service._download_artifact_content",
+                new=AsyncMock(return_value=(b"conteudo", "text/markdown")),
             ),
         ):
-            _, filename = await get_report_markdown("X", "art-1")
+            _, filename, _ = await get_report_content("X", "art-1")
 
         assert filename == "Relatório sem extensão.md"
 
@@ -438,7 +670,7 @@ class TestGetReportMarkdown:
 
         with _patch_from_storage(client):
             with pytest.raises(NotebookNotFoundError):
-                await get_report_markdown("Inexistente", "art-1")
+                await get_report_content("Inexistente", "art-1")
 
         client.artifacts.get.assert_not_awaited()
 
@@ -451,7 +683,7 @@ class TestGetReportMarkdown:
 
         with _patch_from_storage(client):
             with pytest.raises(ArtifactNotFoundError):
-                await get_report_markdown("X", "art-inexistente")
+                await get_report_content("X", "art-inexistente")
 
     @pytest.mark.asyncio
     async def test_propagates_content_unavailable_error(self):
@@ -463,9 +695,9 @@ class TestGetReportMarkdown:
         with (
             _patch_from_storage(client),
             patch(
-                "app.services.notebook_chat_service._download_artifact_markdown",
+                "app.services.notebook_chat_service._download_artifact_content",
                 new=AsyncMock(side_effect=ArtifactContentUnavailableError("sem conteúdo")),
             ),
         ):
             with pytest.raises(ArtifactContentUnavailableError):
-                await get_report_markdown("X", "art-1")
+                await get_report_content("X", "art-1")

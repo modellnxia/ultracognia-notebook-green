@@ -20,7 +20,7 @@ from app.services.notebook_chat_service import (
     ArtifactContentUnavailableError,
     NotebookNotFoundError,
     ask_notebook,
-    get_report_markdown,
+    get_report_content,
     list_studio_items,
 )
 
@@ -74,18 +74,20 @@ async def list_studio_items_endpoint(notebook_title: str) -> NotebookStudioItems
 @router.get("/reports/download")
 async def download_report_endpoint(notebook_title: str, artifact_id: str) -> Response:
     """
-    Download do conteúdo (markdown) de UM relatório específico, escolhido
+    Download do conteúdo de UM relatório/artefato específico, escolhido
     pelo `artifact_id` que já vem em `GET /notebook-chat/studio-items`.
+    Serve tanto markdown quanto binário (PDF) — achado 2026-09-17.
 
     Busca o conteúdo real (caminho oficial da lib + fallback — ver
-    `notebook_chat_service.py::_download_artifact_markdown`) e devolve como
+    `notebook_chat_service.py::_download_artifact_content`) e devolve como
     arquivo pra download de uma vez só — sem streaming nosso, é a resposta
-    completa (mesmo padrão do resto da API, decisão do usuário).
+    completa (mesmo padrão do resto da API, decisão do usuário), com o
+    `Content-Type` real do arquivo (não fixo em markdown como antes).
     """
     logger.info("Download pedido — notebook '%s', artifact_id=%s", notebook_title, artifact_id)
 
     try:
-        content, filename = await get_report_markdown(notebook_title, artifact_id)
+        content, filename, mime_type = await get_report_content(notebook_title, artifact_id)
     except NotebookNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except AmbiguousNotebookTitleError as e:
@@ -103,6 +105,6 @@ async def download_report_endpoint(notebook_title: str, artifact_id: str) -> Res
     safe_filename = quote(filename)
     return Response(
         content=content,
-        media_type="text/markdown",
+        media_type=mime_type,
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_filename}"},
     )

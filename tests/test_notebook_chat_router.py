@@ -183,8 +183,10 @@ class TestDownloadReportEndpoint:
     @pytest.mark.asyncio
     async def test_success_returns_200_with_markdown_file(self, app):
         with patch(
-            "app.routers.notebook_chat.get_report_markdown",
-            new=AsyncMock(return_value=("# conteúdo real", "relatorio-andre-gabriel-rh.md")),
+            "app.routers.notebook_chat.get_report_content",
+            new=AsyncMock(
+                return_value=("# conteúdo real".encode("utf-8"), "relatorio-andre-gabriel-rh.md", "text/markdown")
+            ),
         ) as m_get:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 r = await ac.get(
@@ -196,14 +198,33 @@ class TestDownloadReportEndpoint:
         assert r.headers["content-type"].startswith("text/markdown")
         assert "attachment" in r.headers["content-disposition"]
         assert "relatorio-andre-gabriel-rh.md" in r.headers["content-disposition"]
-        assert r.text == "# conteúdo real"
+        assert r.content == "# conteúdo real".encode("utf-8")
         m_get.assert_awaited_once_with("Presidencia Funchal", "art-1")
+
+    @pytest.mark.asyncio
+    async def test_pdf_artifact_returns_200_with_pdf_content_type(self, app):
+        """Achado 2026-09-17: prompts de consolidação podem gerar PDF como artefato final — precisa funcionar igual."""
+        pdf_bytes = b"%PDF-1.7 conteudo binario fake"
+        with patch(
+            "app.routers.notebook_chat.get_report_content",
+            new=AsyncMock(return_value=(pdf_bytes, "relatorio-diego-consolidado.pdf", "application/pdf")),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                r = await ac.get(
+                    "/notebook-chat/reports/download",
+                    params={"notebook_title": "Presidencia Funchal", "artifact_id": "pdf-1"},
+                )
+
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("application/pdf")
+        assert "relatorio-diego-consolidado.pdf" in r.headers["content-disposition"]
+        assert r.content == pdf_bytes
 
     @pytest.mark.asyncio
     async def test_accented_filename_is_percent_encoded(self, app):
         with patch(
-            "app.routers.notebook_chat.get_report_markdown",
-            new=AsyncMock(return_value=("conteúdo", "relatório com acento.md")),
+            "app.routers.notebook_chat.get_report_content",
+            new=AsyncMock(return_value=(b"conteudo", "relatório com acento.md", "text/markdown")),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 r = await ac.get(
@@ -217,7 +238,7 @@ class TestDownloadReportEndpoint:
     @pytest.mark.asyncio
     async def test_notebook_not_found_returns_404(self, app):
         with patch(
-            "app.routers.notebook_chat.get_report_markdown",
+            "app.routers.notebook_chat.get_report_content",
             new=AsyncMock(side_effect=NotebookNotFoundError("Nenhum notebook encontrado com o título 'X'.")),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -230,7 +251,7 @@ class TestDownloadReportEndpoint:
     @pytest.mark.asyncio
     async def test_ambiguous_title_returns_409(self, app):
         with patch(
-            "app.routers.notebook_chat.get_report_markdown",
+            "app.routers.notebook_chat.get_report_content",
             new=AsyncMock(side_effect=AmbiguousNotebookTitleError("Encontrados 2 notebooks com o título 'X'.")),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -245,7 +266,7 @@ class TestDownloadReportEndpoint:
         from notebooklm.exceptions import ArtifactNotFoundError
 
         with patch(
-            "app.routers.notebook_chat.get_report_markdown",
+            "app.routers.notebook_chat.get_report_content",
             new=AsyncMock(side_effect=ArtifactNotFoundError("art-inexistente")),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -259,7 +280,7 @@ class TestDownloadReportEndpoint:
     @pytest.mark.asyncio
     async def test_content_unavailable_returns_502(self, app):
         with patch(
-            "app.routers.notebook_chat.get_report_markdown",
+            "app.routers.notebook_chat.get_report_content",
             new=AsyncMock(side_effect=ArtifactContentUnavailableError("sem conteúdo por nenhuma via")),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -272,7 +293,7 @@ class TestDownloadReportEndpoint:
     @pytest.mark.asyncio
     async def test_unexpected_error_returns_500(self, app):
         with patch(
-            "app.routers.notebook_chat.get_report_markdown",
+            "app.routers.notebook_chat.get_report_content",
             new=AsyncMock(side_effect=Exception("falha de rede")),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:

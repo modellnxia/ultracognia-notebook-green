@@ -41,6 +41,27 @@ from app.models.notebook_chat import (
 
 logger = logging.getLogger(__name__)
 
+# Timeout do client.chat.ask() pra ESTE serviço (achado 2026-09-17: o padrão
+# da lib é 180s, curto demais pra prompts pesados de consolidação — ex.: um
+# relatório único de 10 áreas + geração de 2 artefatos finais). Colocado
+# acima de qualquer teto externo já mapeado (borda do Railway reporta ~300s
+# na prática) — se algo cortar a chamada, o objetivo é que NÃO seja a nossa
+# própria lib o primeiro a desistir.
+_CHAT_TIMEOUT_SECONDS = 480.0
+
+# Mimes que tratamos como texto (decodificamos e devolvemos como string em
+# list_studio_items). Qualquer outra coisa (ex.: application/pdf) é
+# conteúdo binário — nunca decodificado como texto, só repassado como bytes.
+_TEXT_MIME_TYPES = frozenset({"text/markdown", "text/x-markdown", "text/plain"})
+
+_EXTENSION_BY_MIME = {
+    "text/markdown": ".md",
+    "text/x-markdown": ".md",
+    "text/plain": ".md",
+    "application/pdf": ".pdf",
+}
+_KNOWN_EXTENSIONS = (".md", ".markdown", ".pdf", ".txt")
+
 
 class NotebookNotFoundError(Exception):
     """Nenhum notebook encontrado com o título pedido."""
@@ -75,6 +96,41 @@ async def _find_notebook_id_by_title(client: NotebookLMClient, notebook_title: s
     return matches[0].id
 
 
+async def _ensure_isolated_conversation(client: NotebookLMClient, notebook_id: str) -> None:
+    """
+    Garante isolamento real entre perguntas (requisito confirmado com o
+    usuário em 2026-09-12: "cada pergunta é isolada, sem histórico entre
+    chamadas").
+
+    Achado real (2026-09-17), direto do docstring/comentário interno da
+    lib: SEM `conversation_id`, `client.chat.ask()` NÃO cria uma conversa
+    nova a cada chamada — ele CONTINUA a conversa mais recente do notebook
+    ("the server treats params[4] = null as 'append to the current
+    conversation for this notebook, creating it if needed'"). Ou seja: só
+    de nunca passar `conversation_id` NÃO garantia o isolamento que a gente
+    prometeu — todas as perguntas de uma sessão ficavam encadeadas na mesma
+    conversa server-side.
+
+    A receita documentada pela própria lib pra forçar conversa nova é
+    apagar a conversa atual antes de perguntar (`delete_conversation`) — a
+    próxima `ask()` sem `conversation_id` aí sim começa do zero.
+
+    Melhor esforço: falha aqui não deve travar a pergunta principal — loga
+    e segue mesmo assim (isolamento é uma garantia adicional, não pode
+    derrubar a funcionalidade central por causa dela).
+    """
+    try:
+        current_id = await client.chat.get_conversation_id(notebook_id)
+        if current_id:
+            await client.chat.delete_conversation(notebook_id, current_id)
+            logger.info("Conversa anterior (%s) apagada pra isolar esta pergunta.", current_id)
+    except Exception as exc:
+        logger.warning(
+            "Não consegui garantir isolamento de conversa pro notebook %s (seguindo mesmo assim): %s",
+            notebook_id, exc,
+        )
+
+
 async def ask_notebook(notebook_title: str, question: str) -> NotebookChatResponse:
     """Acha o notebook pelo título e faz UMA pergunta isolada, devolvendo só o texto da resposta."""
     # `async with NotebookLMClient.from_storage() as client:` — SEM `await` antes
@@ -82,9 +138,11 @@ async def ask_notebook(notebook_title: str, question: str) -> NotebookChatRespon
     # (a forma antiga, `async with await NotebookLMClient.from_storage() as client:`,
     # usada em report_service.py, já emite DeprecationWarning nesta mesma versão
     # 0.8.0 e será removida na v1.0 — não vale reproduzir isso em código novo).
-    async with NotebookLMClient.from_storage() as client:
+    async with NotebookLMClient.from_storage(chat_timeout=_CHAT_TIMEOUT_SECONDS) as client:
         notebook_id = await _find_notebook_id_by_title(client, notebook_title)
         logger.info("Chat isolado — notebook '%s' (id=%s)", notebook_title, notebook_id)
+
+        await _ensure_isolated_conversation(client, notebook_id)
 
         result = await client.chat.ask(notebook_id, question)
         logger.debug(
@@ -95,28 +153,34 @@ async def ask_notebook(notebook_title: str, question: str) -> NotebookChatRespon
     return NotebookChatResponse(answer=result.answer)
 
 
-async def _download_via_raw_url(client: NotebookLMClient, notebook_id: str, artifact_id: str) -> str:
+async def _download_via_raw_url(client: NotebookLMClient, notebook_id: str, artifact_id: str) -> tuple[bytes, str]:
     """
     Fallback (achado real, 2026-09-14) — usado quando `download_report()`
     falha pra um artefato de tipo não reconhecido por esta versão da lib
-    (ver docstring de `_download_artifact_markdown`). A linha bruta da
+    (ver docstring de `_download_artifact_content`). A linha bruta da
     listagem de artefatos (`client.artifacts._list_raw`) carrega, numa
     posição não documentada/tipada oficialmente pela lib (índice 24 —
     `[nome, mime, url_visualização, url_download]`), a MESMA URL de
     download que o produto usa de verdade — testada manualmente: autenticando
     com os cookies da própria sessão (mesma função que a lib usa
-    internamente), devolve o arquivo `.md` completo e íntegro.
+    internamente), devolve o arquivo completo e íntegro.
+
+    Devolve `(conteúdo bruto em bytes, mime_type)` — achado 2026-09-17:
+    esse fallback também serve artefatos BINÁRIOS (ex.: PDF gerado via
+    chat), então nunca decodifica como texto aqui — quem decide se decodifica
+    é o chamador, olhando o mime.
 
     ⚠️ Não é API pública/documentada da lib — é dado bruto do RPC de
     listagem, lido por posição. Se o Google mudar o formato da resposta,
     isso pode quebrar sem aviso — por isso os `try/except` aqui e em
-    `_download_artifact_markdown`: falha alto e claro
+    `_download_artifact_content`: falha alto e claro
     (`ArtifactContentUnavailableError`), nunca silenciosamente devolve lixo.
     """
     raw_rows = await client.artifacts._list_raw(notebook_id)
     row = next((r for r in raw_rows if isinstance(r, list) and r and r[0] == artifact_id), None)
 
     try:
+        raw_mime = row[24][1]
         download_url = row[24][3]
         if not isinstance(download_url, str) or not download_url.startswith("http"):
             raise ValueError("posição [24][3] não contém uma URL válida")
@@ -129,26 +193,38 @@ async def _download_via_raw_url(client: NotebookLMClient, notebook_id: str, arti
     async with httpx.AsyncClient(follow_redirects=True, timeout=60, cookies=cookies) as http_client:
         resp = await http_client.get(download_url)
         resp.raise_for_status()
-        return resp.text
+        mime_type = raw_mime if isinstance(raw_mime, str) and raw_mime else resp.headers.get(
+            "content-type", "application/octet-stream"
+        ).split(";")[0].strip()
+        return resp.content, mime_type
 
 
-async def _download_artifact_markdown(client: NotebookLMClient, notebook_id: str, artifact_id: str) -> str:
+async def _download_artifact_content(
+    client: NotebookLMClient, notebook_id: str, artifact_id: str
+) -> tuple[bytes, str]:
     """
-    Busca o conteúdo em markdown de um artefato, tentando primeiro o
-    caminho **oficial** da lib (`client.artifacts.download_report`, o
-    mesmo que `report_service.py` já usa — funciona pra relatórios
-    "tradicionais", tipo REPORT) e caindo pro fallback (achado 2026-09-14,
-    `_download_via_raw_url`) só quando o oficial falhar — é o caso real dos
-    relatórios que o CHAT gera (tipo de artefato não mapeado nesta versão
-    da lib, `ArtifactNotReadyError` mesmo com o artefato pronto).
+    Busca o conteúdo bruto de um artefato (markdown OU binário — ex.: PDF),
+    tentando primeiro o caminho **oficial** da lib
+    (`client.artifacts.download_report`, o mesmo que `report_service.py` já
+    usa — funciona pra relatórios "tradicionais", tipo REPORT, sempre
+    markdown) e caindo pro fallback (achado 2026-09-14, `_download_via_raw_url`,
+    que também serve conteúdo binário) só quando o oficial falhar — é o
+    caso real dos relatórios/artefatos que o CHAT gera (tipo não mapeado
+    nesta versão da lib, `ArtifactNotReadyError` mesmo com o artefato
+    pronto).
 
-    Levanta `ArtifactContentUnavailableError` se os dois falharem.
+    Devolve `(conteúdo bruto em bytes, mime_type)`. Levanta
+    `ArtifactContentUnavailableError` se os dois caminhos falharem.
     """
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir) / f"{artifact_id}.md"
         try:
             await client.artifacts.download_report(notebook_id, str(tmp_path), artifact_id=artifact_id)
-            return tmp_path.read_text(encoding="utf-8")
+            # read_text (não read_bytes) de propósito: o arquivo temporário é
+            # sempre markdown/texto, e no Windows write_text/read_bytes puro
+            # deixaria \r\n vazando pro conteúdo final (a lib escreve em modo
+            # texto). read_text normaliza quebra de linha antes de reencodar.
+            return tmp_path.read_text(encoding="utf-8").encode("utf-8"), "text/markdown"
         except Exception as exc:
             logger.info(
                 "download_report oficial falhou pro artefato %s — tentando fallback: %s", artifact_id, exc
@@ -164,25 +240,36 @@ async def _download_artifact_markdown(client: NotebookLMClient, notebook_id: str
         ) from exc
 
 
-async def get_report_markdown(notebook_title: str, artifact_id: str) -> tuple[str, str]:
+def _filename_with_extension(title: str, mime_type: str) -> str:
+    """Garante extensão certa no nome de arquivo — usa a do título se já vier reconhecível, senão deriva do mime."""
+    if title.lower().endswith(_KNOWN_EXTENSIONS):
+        return title
+    return f"{title}{_EXTENSION_BY_MIME.get(mime_type, '.md')}"
+
+
+async def get_report_content(notebook_title: str, artifact_id: str) -> tuple[bytes, str, str]:
     """
-    Busca o conteúdo em markdown de UM relatório específico (mesmo
+    Busca o conteúdo bruto de UM relatório/artefato específico (mesmo
     `artifact_id` que já vem em `GET /notebook-chat/studio-items`), pronto
     pra virar download — base do `GET /notebook-chat/reports/download`.
+    Serve tanto markdown quanto binário (PDF) — achado 2026-09-17, prompts
+    de consolidação podem gerar os dois como artefatos separados.
 
     `client.artifacts.get(notebook_id, artifact_id)` faz dois trabalhos de
     uma vez: confirma que o artefato existe (levanta `ArtifactNotFoundError`
     da própria lib se não existir) e confirma que ele pertence a ESSE
     notebook (não dá pra usar o id de um artefato de outro notebook).
+
+    Devolve `(conteúdo bruto em bytes, filename com extensão certa, mime_type)`.
     """
     async with NotebookLMClient.from_storage() as client:
         notebook_id = await _find_notebook_id_by_title(client, notebook_title)
         artifact = await client.artifacts.get(notebook_id, artifact_id)
 
-        content = await _download_artifact_markdown(client, notebook_id, artifact_id)
+        content, mime_type = await _download_artifact_content(client, notebook_id, artifact_id)
 
-    filename = artifact.title if artifact.title.endswith(".md") else f"{artifact.title}.md"
-    return content, filename
+    filename = _filename_with_extension(artifact.title, mime_type)
+    return content, filename, mime_type
 
 
 async def list_studio_items(notebook_title: str) -> NotebookStudioItemsResponse:
@@ -228,13 +315,24 @@ async def list_studio_items(notebook_title: str) -> NotebookStudioItemsResponse:
         report_infos = []
         for artifact in report_artifacts:
             content = None
-            try:
-                content = await _download_artifact_markdown(client, notebook_id, artifact.id)
-            except ArtifactContentUnavailableError as exc:
-                logger.warning(
-                    "Conteúdo indisponível pro relatório %s ('%s'): %s",
-                    artifact.id, artifact.title, exc,
-                )
+            # Achado 2026-09-17: nem todo artefato é texto (prompts de
+            # consolidação podem gerar PDF como artefato final). Decidir
+            # pelo título ANTES de tentar baixar evita dois problemas de
+            # uma vez: (a) nunca devolve conteúdo binário corrompido como
+            # se fosse texto (bug real, corrigido aqui), (b) evita a
+            # tentativa de download (5-11s, sempre falha o caminho oficial
+            # antes do fallback) pra artefatos que já sabemos não ser
+            # texto — resolve o achado de performance sinalizado antes.
+            if not artifact.title.lower().endswith(".pdf"):
+                try:
+                    raw_bytes, mime_type = await _download_artifact_content(client, notebook_id, artifact.id)
+                    if mime_type in _TEXT_MIME_TYPES:
+                        content = raw_bytes.decode("utf-8", errors="replace")
+                except ArtifactContentUnavailableError as exc:
+                    logger.warning(
+                        "Conteúdo indisponível pro relatório %s ('%s'): %s",
+                        artifact.id, artifact.title, exc,
+                    )
             report_infos.append(
                 ReportArtifactInfo(
                     id=artifact.id,
